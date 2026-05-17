@@ -14,11 +14,15 @@
 //!   `validate_logic_buttons` (port of
 //!   `ButtonLogical::isLogicConfigComplete`).
 //! - [`axes`] — `AxisFilter` enum mirroring the 3-bit filter field.
+//! - [`buttons`] — `ButtonType` enum, Button bitfield setters, and the
+//!   per-physical coexistence rule from F103_GESTURE_PLAN.md.
 
 pub mod axes;
+pub mod buttons;
 pub mod logic;
 pub mod pins;
 
 pub use axes::AxisFilter;
+pub use buttons::{physical_assignment_blocked, ButtonType, CoexistenceCheck};
 pub use logic::{validate_logic_buttons, LogicError, LogicOp, BUTTON_TYPE_LOGIC};
 pub use pins::{validate_pins, Board, PinConflict, PinConflictKind, PinFunction};
