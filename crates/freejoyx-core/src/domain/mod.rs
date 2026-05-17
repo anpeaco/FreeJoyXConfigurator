@@ -13,9 +13,12 @@
 //! - [`logic`] — `LogicOp` enum, the `BUTTON_TYPE_LOGIC` constant, and
 //!   `validate_logic_buttons` (port of
 //!   `ButtonLogical::isLogicConfigComplete`).
+//! - [`axes`] — `AxisFilter` enum mirroring the 3-bit filter field.
 
+pub mod axes;
 pub mod logic;
 pub mod pins;
 
+pub use axes::AxisFilter;
 pub use logic::{validate_logic_buttons, LogicError, LogicOp, BUTTON_TYPE_LOGIC};
 pub use pins::{validate_pins, Board, PinConflict, PinConflictKind, PinFunction};

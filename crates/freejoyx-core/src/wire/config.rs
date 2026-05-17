@@ -160,13 +160,22 @@ impl AxisConfig {
     pub fn out_enabled(&self) -> bool {
         self.flags1 & 0x01 != 0
     }
+    pub fn set_out_enabled(&mut self, v: bool) {
+        set_bit(&mut self.flags1, 0x01, v);
+    }
     #[must_use]
     pub fn inverted(&self) -> bool {
         self.flags1 & 0x02 != 0
     }
+    pub fn set_inverted(&mut self, v: bool) {
+        set_bit(&mut self.flags1, 0x02, v);
+    }
     #[must_use]
     pub fn is_centered(&self) -> bool {
         self.flags1 & 0x04 != 0
+    }
+    pub fn set_is_centered(&mut self, v: bool) {
+        set_bit(&mut self.flags1, 0x04, v);
     }
     /// `function` 2-bit field (NO_FUNCTION..FUNCTION_EQUAL).
     #[must_use]
@@ -178,15 +187,27 @@ impl AxisConfig {
     pub fn filter(&self) -> u8 {
         (self.flags1 >> 5) & 0x07
     }
+    /// Set the `filter` 3-bit field. Values > 7 are clamped to 7.
+    pub fn set_filter(&mut self, v: u8) {
+        set_bits(&mut self.flags1, 5, 0x07, v);
+    }
 
     // -- accessors over flags2 --
     #[must_use]
     pub fn resolution(&self) -> u8 {
         self.flags2 & 0x0f
     }
+    /// Set the `resolution` 4-bit field. Values > 15 are clamped to 15.
+    pub fn set_resolution(&mut self, v: u8) {
+        set_bits(&mut self.flags2, 0, 0x0f, v);
+    }
     #[must_use]
     pub fn channel(&self) -> u8 {
         (self.flags2 >> 4) & 0x0f
+    }
+    /// Set the `channel` 4-bit field. Values > 15 are clamped to 15.
+    pub fn set_channel(&mut self, v: u8) {
+        set_bits(&mut self.flags2, 4, 0x0f, v);
     }
 
     // -- accessors over flags3 --
@@ -194,10 +215,32 @@ impl AxisConfig {
     pub fn deadband_size(&self) -> u8 {
         self.flags3 & 0x7f
     }
+    /// Set the `deadband_size` 7-bit field. Values > 127 are clamped.
+    pub fn set_deadband_size(&mut self, v: u8) {
+        set_bits(&mut self.flags3, 0, 0x7f, v);
+    }
     #[must_use]
     pub fn is_dynamic_deadband(&self) -> bool {
         self.flags3 & 0x80 != 0
     }
+    pub fn set_is_dynamic_deadband(&mut self, v: bool) {
+        set_bit(&mut self.flags3, 0x80, v);
+    }
+}
+
+fn set_bit(byte: &mut u8, mask: u8, v: bool) {
+    if v {
+        *byte |= mask;
+    } else {
+        *byte &= !mask;
+    }
+}
+
+/// Write `v` (truncated to `mask` width) into `byte` at `shift`,
+/// preserving every other bit.
+fn set_bits(byte: &mut u8, shift: u32, mask: u8, v: u8) {
+    let cleared = *byte & !(mask << shift);
+    *byte = cleared | ((v & mask) << shift);
 }
 
 /// One slot of `button_t`.
@@ -779,6 +822,96 @@ mod tests {
         assert_eq!(cfg.pid, 0xabcd);
         assert_eq!(cfg.rgb_delay_ms, 0x4321);
         assert_eq!(cfg.saved_breakdown.direct, 0x42);
+    }
+
+    /// Each axis-config setter touches only its own bit positions.
+    /// Sets every other bit in the byte first so cross-contamination
+    /// shows up as a flipped neighbour.
+    #[test]
+    fn axis_config_setters_isolate_their_bits() {
+        let mut a = AxisConfig {
+            calib_min: 0,
+            calib_center: 0,
+            calib_max: 0,
+            flags1: 0xff,
+            curve_shape: [0; 11],
+            flags2: 0xff,
+            flags3: 0xff,
+            source_main: 0,
+            flags4: 0,
+            button1: 0,
+            button2: 0,
+            button3: 0,
+            divider: 0,
+            i2c_address: 0,
+            flags5: 0,
+            prescaler: 0,
+            reserved: 0,
+        };
+
+        a.set_out_enabled(false);
+        assert!(!a.out_enabled());
+        assert!(a.inverted());
+        assert!(a.is_centered());
+        assert_eq!(a.filter(), 0x07);
+        assert_eq!(a.flags1, 0xfe);
+
+        a.set_filter(0b010);
+        assert_eq!(a.filter(), 0b010);
+        assert!(!a.out_enabled());
+        assert!(a.inverted());
+
+        a.set_resolution(0b1001);
+        assert_eq!(a.resolution(), 0b1001);
+        assert_eq!(a.channel(), 0x0f);
+
+        a.set_channel(0b0011);
+        assert_eq!(a.channel(), 0b0011);
+        assert_eq!(a.resolution(), 0b1001);
+
+        a.set_deadband_size(0x55);
+        assert_eq!(a.deadband_size(), 0x55);
+        assert!(a.is_dynamic_deadband());
+
+        a.set_is_dynamic_deadband(false);
+        assert!(!a.is_dynamic_deadband());
+        assert_eq!(a.deadband_size(), 0x55);
+    }
+
+    /// Setters truncate, never silently spill into adjacent fields.
+    #[test]
+    fn axis_config_setters_truncate_oversize_values() {
+        let mut a = AxisConfig {
+            calib_min: 0,
+            calib_center: 0,
+            calib_max: 0,
+            flags1: 0,
+            curve_shape: [0; 11],
+            flags2: 0,
+            flags3: 0,
+            source_main: 0,
+            flags4: 0,
+            button1: 0,
+            button2: 0,
+            button3: 0,
+            divider: 0,
+            i2c_address: 0,
+            flags5: 0,
+            prescaler: 0,
+            reserved: 0,
+        };
+
+        a.set_filter(0xff);
+        assert_eq!(a.filter(), 0x07);
+        assert_eq!(a.flags1, 0xe0);
+
+        a.set_resolution(0xff);
+        a.set_channel(0xff);
+        assert_eq!(a.flags2, 0xff);
+
+        a.set_deadband_size(0xff);
+        assert_eq!(a.deadband_size(), 0x7f);
+        assert!(!a.is_dynamic_deadband());
     }
 
     /// Sub-struct byte budgets sum to the wire total. Documents the
