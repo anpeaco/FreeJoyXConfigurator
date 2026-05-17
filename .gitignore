@@ -1,0 +1,27 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE
+/.idea/
+/.vscode/
+*.iml
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Fixture-capture scratch (real fixtures live in fixtures/<name>/ and are committed;
+# anything under fixtures/_capture_* is a throwaway working dir).
+fixtures/_capture_*/
+
+# Build artifacts from cargo-bundle
+/dist/

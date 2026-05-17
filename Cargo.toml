@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/freejoyx-core",
+    "crates/freejoyx-device",
+    "crates/freejoyx-ui",
+    "crates/freejoyx-app",
+]
+
+[workspace.package]
+version = "0.1.0-pre"
+edition = "2021"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+repository = "https://github.com/anpeaco/FreeJoyXConfigurator"
+authors = ["FreeJoyXConfigurator contributors"]
+
+[workspace.dependencies]
+freejoyx-core = { path = "crates/freejoyx-core" }
+freejoyx-device = { path = "crates/freejoyx-device" }
+freejoyx-ui = { path = "crates/freejoyx-ui" }
+hidapi = "2"
+serde = { version = "1", features = ["derive"] }
+serde-big-array = "0.5"
+ron = "0.8"
+slint = { version = "1.13", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+rfd = "0.14"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
