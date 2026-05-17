@@ -347,18 +347,21 @@ struct AxisRow {
 component CheckCell inherits Rectangle {
     in property <string> label;
     in property <bool> checked;
+    /// When set, hide the trailing label so the cell is a bare
+    /// check-square sized for a table column.
+    in property <bool> compact: false;
     callback toggled();
 
     height: 26px;
-    min-width: 70px;
+    min-width: root.compact ? 26px : 70px;
     background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
     border-color: root.checked ? Palette.accent : Palette.border;
     border-width: 1px;
     border-radius: 3px;
 
     HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
+        padding-left: root.compact ? 0px : 8px;
+        padding-right: root.compact ? 0px : 8px;
         spacing: 6px;
         alignment: center;
         Rectangle {
@@ -370,7 +373,7 @@ component CheckCell inherits Rectangle {
             background: root.checked ? Palette.accent : transparent;
             y: (parent.height - self.height) / 2;
         }
-        Text {
+        if !root.compact: Text {
             text: root.label;
             color: Palette.text;
             font-size: 12px;
@@ -387,16 +390,19 @@ component NumberCell inherits Rectangle {
     in property <string> label;
     in property <int> value;
     in property <length> field-width: 70px;
+    /// When set, suppress the leading label so the cell sits cleanly in a
+    /// column under a header row.
+    in property <bool> compact: false;
     callback edited(int);
 
     height: 26px;
-    min-width: 110px;
+    min-width: root.compact ? root.field-width : 110px;
 
     HorizontalLayout {
         spacing: 4px;
         alignment: start;
 
-        Text {
+        if !root.compact: Text {
             text: root.label;
             color: Palette.text-dim;
             font-size: 11px;
@@ -437,6 +443,10 @@ component CycleCell inherits Rectangle {
     in property <string> label;
     in property <string> value-label;
     in property <length> value-width: 100px;
+    /// When set, drop the leading label and let the value pill fill
+    /// the cell — for table layouts where the column header carries
+    /// the label.
+    in property <bool> compact: false;
     callback cycled();
 
     height: 26px;
@@ -444,7 +454,7 @@ component CycleCell inherits Rectangle {
     HorizontalLayout {
         spacing: 4px;
         alignment: start;
-        Text {
+        if !root.compact: Text {
             text: root.label;
             color: Palette.text-dim;
             font-size: 11px;
@@ -689,6 +699,42 @@ component LiveDot inherits Rectangle {
     border-width: 1px;
 }
 
+// Column widths for the Buttons + Logic table. Header cells and row
+// cells both pull from these so the grid stays aligned regardless of
+// the value rendered inside.
+export global BtnCols {
+    out property <length> w-num: 32px;
+    out property <length> w-phy: 56px;
+    out property <length> w-type: 144px;
+    out property <length> w-shift: 36px;
+    out property <length> w-inv: 38px;
+    out property <length> w-dis: 38px;
+    out property <length> w-live: 30px;
+    out property <length> spacing: 8px;
+    // Logic sub-row columns. Offsets sit under the main row's Type
+    // column (so logic operands feel attached to the slot type).
+    out property <length> w-op: 96px;
+    out property <length> w-srcb: 52px;
+    out property <length> w-debounce: 76px;
+}
+
+component HeaderCell inherits Rectangle {
+    in property <string> text;
+    in property <length> col-width: 32px;
+    in property <TextHorizontalAlignment> hpad: TextHorizontalAlignment.left;
+    width: root.col-width;
+    Text {
+        text: root.text;
+        color: Palette.text-dim;
+        font-size: 10px;
+        letter-spacing: 0.4px;
+        horizontal-alignment: root.hpad;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+}
+
 component ButtonRowView inherits Rectangle {
     in property <ButtonRow> entry;
     in property <int> slot;
@@ -708,86 +754,86 @@ component ButtonRowView inherits Rectangle {
     border-radius: 4px;
 
     VerticalLayout {
-        padding: 4px;
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 4px;
+        padding-bottom: 4px;
         spacing: 2px;
 
         HorizontalLayout {
-            spacing: 6px;
+            spacing: BtnCols.spacing;
             alignment: start;
-            Text {
+            HeaderCell {
                 text: (root.slot + 1) + ".";
-                color: Palette.text-dim;
-                font-size: 11px;
-                width: 32px;
-                horizontal-alignment: right;
-                vertical-alignment: center;
+                col-width: BtnCols.w-num;
+                hpad: TextHorizontalAlignment.right;
             }
             NumberCell {
-                label: "phy";
+                compact: true;
                 value: root.entry.physical-num;
-                field-width: 52px;
+                field-width: BtnCols.w-phy;
                 edited(v) => { root.physical-edited(root.slot, v); }
             }
             CycleCell {
-                label: "type";
+                compact: true;
                 value-label: root.entry.type-label;
-                value-width: 140px;
+                value-width: BtnCols.w-type;
                 cycled => { root.type-cycled(root.slot); }
             }
             CycleCell {
-                label: "shift";
+                compact: true;
                 value-label: root.entry.shift-modificator;
-                value-width: 30px;
+                value-width: BtnCols.w-shift;
                 cycled => { root.shift-cycled(root.slot); }
             }
             CheckCell {
-                label: "Inv";
+                compact: true;
                 checked: root.entry.is-inverted;
                 toggled => { root.inverted-toggled(root.slot); }
             }
             CheckCell {
-                label: "Dis";
+                compact: true;
                 checked: root.entry.is-disabled;
                 toggled => { root.disabled-toggled(root.slot); }
             }
             Rectangle { horizontal-stretch: 1; }
-            LiveDot {
-                on: root.entry.phy-pressed;
-                y: (parent.height - self.height) / 2;
-            }
-            LiveDot {
-                on: root.entry.log-pressed;
-                on-color: Palette.success;
-                y: (parent.height - self.height) / 2;
+            HorizontalLayout {
+                spacing: 4px;
+                width: BtnCols.w-live;
+                alignment: center;
+                LiveDot {
+                    on: root.entry.phy-pressed;
+                    y: (parent.height - self.height) / 2;
+                }
+                LiveDot {
+                    on: root.entry.log-pressed;
+                    on-color: Palette.success;
+                    y: (parent.height - self.height) / 2;
+                }
             }
         }
 
         if root.entry.is-logic: HorizontalLayout {
-            spacing: 6px;
-            padding-left: 38px;
-            Text {
-                text: "logic:";
-                color: Palette.text-dim;
-                font-size: 11px;
-                width: 40px;
-                vertical-alignment: center;
-            }
+            spacing: BtnCols.spacing;
+            alignment: start;
+            // Offset under the Type column.
+            Rectangle { width: BtnCols.w-num + BtnCols.spacing + BtnCols.w-phy; }
             CycleCell {
-                label: "op";
+                compact: true;
                 value-label: root.entry.op-label;
-                value-width: 90px;
+                value-width: BtnCols.w-op;
                 cycled => { root.op-cycled(root.slot); }
             }
             NumberCell {
-                label: "src B";
+                compact: true;
                 value: root.entry.src-b;
-                field-width: 52px;
+                field-width: BtnCols.w-srcb;
                 edited(v) => { root.src-b-edited(root.slot, v); }
             }
             CycleCell {
-                label: "debounce";
+                compact: true;
                 value-label: root.entry.debounce-label;
-                value-width: 70px;
+                value-width: BtnCols.w-debounce;
                 cycled => { root.debounce-cycled(root.slot); }
             }
             Rectangle {
@@ -796,8 +842,16 @@ component ButtonRowView inherits Rectangle {
                 background: Palette.error;
                 border-radius: 3px;
                 HorizontalLayout {
-                    padding-left: 8px;
+                    padding-left: 6px;
                     padding-right: 8px;
+                    spacing: 4px;
+                    alignment: center;
+                    LucideIcon {
+                        source: @image-url("../assets/icons/alert-octagon.svg");
+                        tint: #ffffff;
+                        size: 12px;
+                        y: (parent.height - self.height) / 2;
+                    }
                     Text {
                         text: root.entry.logic-error;
                         color: #ffffff;
@@ -808,6 +862,31 @@ component ButtonRowView inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; }
         }
+    }
+}
+
+// Column-header strip for the Buttons + Logic table. Sits above the
+// Flickable so it stays visible while the rows scroll.
+component ButtonsHeaderRow inherits Rectangle {
+    height: 24px;
+    background: Palette.bg-panel;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: BtnCols.spacing;
+        HeaderCell { text: "#"; col-width: BtnCols.w-num; hpad: TextHorizontalAlignment.right; }
+        HeaderCell { text: "PHYSICAL"; col-width: BtnCols.w-phy; }
+        HeaderCell { text: "TYPE"; col-width: BtnCols.w-type; }
+        HeaderCell { text: "SHIFT"; col-width: BtnCols.w-shift; hpad: TextHorizontalAlignment.center; }
+        HeaderCell { text: "INV"; col-width: BtnCols.w-inv; hpad: TextHorizontalAlignment.center; }
+        HeaderCell { text: "DIS"; col-width: BtnCols.w-dis; hpad: TextHorizontalAlignment.center; }
+        Rectangle { horizontal-stretch: 1; }
+        HeaderCell { text: "LIVE"; col-width: BtnCols.w-live; hpad: TextHorizontalAlignment.center; }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Palette.border;
     }
 }
 
@@ -835,11 +914,13 @@ component ButtonsTab inherits Rectangle {
             font-weight: 600;
         }
         Text {
-            text: "128 button slots. Type cycle skips assignments blocked by the per-physical gesture rule. LOGIC rows expose op / Source B / debounce. Amber dot = physical pressed; green dot = logical state.";
+            text: "128 button slots. Type cycle skips assignments blocked by the per-physical gesture rule. LOGIC rows expose op / Source B / debounce in a sub-row under the Type column. Amber dot = physical pressed; green dot = logical state.";
             color: Palette.text-dim;
             font-size: 11px;
             wrap: word-wrap;
         }
+
+        ButtonsHeaderRow { }
 
         Flickable {
             // 38 px for a plain row, 72 px when the LOGIC sub-row is visible.
