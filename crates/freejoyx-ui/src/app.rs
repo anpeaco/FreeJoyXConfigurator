@@ -150,6 +150,11 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
         .collect();
     window.set_function_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
 
+    // Build the category-grouped button-type picker entries once.
+    // Blocked-info is populated per open in `buttons::wire_callbacks`.
+    let picker_entries = buttons_glue::build_picker_entries();
+    window.set_button_type_picker_entries(ModelRc::from(Rc::new(VecModel::from(picker_entries))));
+
     let state = Rc::new(RefCell::new(State::new(handle)));
 
     wire_read_callback(&window, &state);

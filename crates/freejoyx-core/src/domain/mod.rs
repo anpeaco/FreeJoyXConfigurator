@@ -28,7 +28,9 @@ pub mod pins;
 pub mod shift_registers;
 
 pub use axes::AxisFilter;
-pub use buttons::{physical_assignment_blocked, ButtonType, CoexistenceCheck};
+pub use buttons::{
+    physical_assignment_blocked, ButtonType, ButtonTypeCategory, CoexistenceCheck,
+};
 pub use encoders::EncoderMode;
 pub use logic::{validate_logic_buttons, LogicError, LogicOp, BUTTON_TYPE_LOGIC};
 pub use pins::{

@@ -12,13 +12,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use freejoyx_core::domain::{
-    physical_assignment_blocked, validate_logic_buttons, ButtonType, CoexistenceCheck, LogicError,
-    LogicOp, BUTTON_TYPE_LOGIC,
+    physical_assignment_blocked, validate_logic_buttons, ButtonType, ButtonTypeCategory,
+    CoexistenceCheck, LogicError, LogicOp, BUTTON_TYPE_LOGIC,
 };
 use freejoyx_core::wire::{Button, DeviceConfig, ParamsReport, MAX_BUTTONS_NUM, MAX_SHIFTS_NUM};
-use slint::{ComponentHandle, Model, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::{AppWindow, ButtonRow, ShiftSlot, TimerField};
+use crate::{AppWindow, ButtonRow, ShiftSlot, TimerField, TypeBlockedInfo, TypePickerEntry};
 
 /// Number of editable timer fields surfaced on the Shifts & Timers tab.
 /// Indices map to `TIMER_FIELDS` below.
@@ -258,34 +258,66 @@ pub fn refresh_button_row(
     model.set_row_data(slot, row);
 }
 
-/// Step the type cycle, skipping variants blocked by the per-physical
-/// coexistence rule. Returns the new wire byte the caller should write
-/// into `button.button_type`.
-///
-/// If `current` doesn't decode to a known type we start at `Normal`
-/// rather than try to interpret garbage. If *every* variant is blocked
-/// (shouldn't happen — Normal is always gesture-compatible) the
-/// function returns the current value unchanged.
+/// Build the static category-grouped picker entries (one header per
+/// [`ButtonTypeCategory`] followed by its entries in display order).
+/// Called once at app startup and pushed onto
+/// `AppWindow::button_type_picker_entries`.
 #[must_use]
-pub fn next_compatible_type(
+pub fn build_picker_entries() -> Vec<TypePickerEntry> {
+    let mut out = Vec::with_capacity(64);
+    for cat in ButtonTypeCategory::all() {
+        out.push(TypePickerEntry {
+            is_header: true,
+            label: SharedString::from(cat.label()),
+            type_index: -1,
+        });
+        for bt in cat.entries() {
+            out.push(TypePickerEntry {
+                is_header: false,
+                label: SharedString::from(bt.label()),
+                type_index: i32::from(bt.to_u8()),
+            });
+        }
+    }
+    out
+}
+
+/// For the currently-open picker, compute one [`TypeBlockedInfo`] per
+/// `ButtonType` (length 36 — entries indexed by the wire byte). Header
+/// rows in the picker carry `type_index == -1` and ignore this array.
+#[must_use]
+pub fn build_blocked_info(
     buttons: &[Button; MAX_BUTTONS_NUM],
     slot: usize,
     physical_num: i8,
-    current: u8,
-) -> u8 {
-    let start = ButtonType::from_u8(current).map_or(0u8, ButtonType::to_u8);
-    for step in 1u8..=36 {
-        let candidate = (u16::from(start) + u16::from(step)) % 36;
-        let candidate_u8 = u8::try_from(candidate).unwrap_or(0);
-        let Some(typed) = ButtonType::from_u8(candidate_u8) else {
-            continue;
-        };
-        match physical_assignment_blocked(buttons, slot, physical_num, typed) {
-            CoexistenceCheck::Ok => return candidate_u8,
-            CoexistenceCheck::Blocked { .. } => {}
-        }
-    }
-    current
+) -> Vec<TypeBlockedInfo> {
+    (0u8..=35)
+        .map(|raw| {
+            let Some(candidate) = ButtonType::from_u8(raw) else {
+                return TypeBlockedInfo {
+                    blocked: false,
+                    reason: SharedString::default(),
+                };
+            };
+            match physical_assignment_blocked(buttons, slot, physical_num, candidate) {
+                CoexistenceCheck::Ok => TypeBlockedInfo {
+                    blocked: false,
+                    reason: SharedString::default(),
+                },
+                CoexistenceCheck::Blocked { other_slot, other_type } => {
+                    let other_label = ButtonType::from_u8(other_type)
+                        .map_or_else(|| format!("? ({other_type})"), |t| t.label().to_string());
+                    TypeBlockedInfo {
+                        blocked: true,
+                        reason: SharedString::from(format!(
+                            "slot {} uses {other_label}",
+                            other_slot + 1
+                        )),
+                    }
+                }
+            }
+        })
+        .collect()
 }
 
 /// Mutate a button slot under `state.last_config`. Returns the most
@@ -363,22 +395,88 @@ pub fn wire_callbacks(
         b.set_delay_timer(next);
     }));
 
-    // Type cycle has to consult the coexistence rule, so it can't
-    // use the simple toggle helper.
+    // Type picker (issue #7) — replaces the old wire-order cycle.
+    // Opening computes per-physical blocked state for the slot and
+    // populates the overlay; clicking an entry applies the type and
+    // closes the picker.
+    {
+        let s = state.clone();
+        let w = window.as_weak();
+        let blocked_model: Rc<VecModel<TypeBlockedInfo>> = Rc::new(VecModel::default());
+        if let Some(w_now) = w.upgrade() {
+            w_now.set_button_type_picker_blocked(ModelRc::from(blocked_model.clone()));
+        }
+        let blocked_for_open = blocked_model.clone();
+        window.on_button_type_picker_opened(move |slot| {
+            let Ok(slot_usz) = usize::try_from(slot) else {
+                return;
+            };
+            let (info, current) = {
+                let st = s.borrow();
+                let Some(cfg) = st.last_config.as_ref() else {
+                    return;
+                };
+                if slot_usz >= MAX_BUTTONS_NUM {
+                    return;
+                }
+                let phy = cfg.buttons[slot_usz].physical_num;
+                let info = build_blocked_info(&cfg.buttons, slot_usz, phy);
+                let current = i32::from(cfg.buttons[slot_usz].button_type);
+                (info, current)
+            };
+            while blocked_for_open.row_count() > 0 {
+                blocked_for_open.remove(0);
+            }
+            for v in info {
+                blocked_for_open.push(v);
+            }
+            if let Some(w_now) = w.upgrade() {
+                w_now.set_button_type_picker_slot(slot);
+                w_now.set_button_type_picker_current(current);
+                w_now.set_button_type_picker_open(true);
+            }
+        });
+    }
     {
         let s = state.clone();
         let m = button_model.clone();
         let w = window.as_weak();
-        window.on_button_type_cycled(move |slot| {
-            let Ok(slot) = usize::try_from(slot) else {
+        window.on_button_type_picked(move |slot, type_index| {
+            let Ok(slot_usz) = usize::try_from(slot) else {
                 return;
             };
-            let _ = with_button_slot(&s, slot, |b, all_buttons| {
-                let next = next_compatible_type(all_buttons, slot, b.physical_num, b.button_type);
-                b.button_type = next;
+            let Ok(type_index_u8) = u8::try_from(type_index) else {
+                return;
+            };
+            if ButtonType::from_u8(type_index_u8).is_none() {
+                return;
+            }
+            let _ = with_button_slot(&s, slot_usz, |b, all_buttons| {
+                // Re-check coexistence at pick time so a stale picker
+                // (config changed while open) can't write a now-invalid
+                // type.
+                let candidate = ButtonType::from_u8(type_index_u8).unwrap_or(ButtonType::Normal);
+                match physical_assignment_blocked(all_buttons, slot_usz, b.physical_num, candidate)
+                {
+                    CoexistenceCheck::Ok => {
+                        b.button_type = type_index_u8;
+                    }
+                    CoexistenceCheck::Blocked { .. } => {}
+                }
             });
-            refresh_after_button_edit(&s, &m, slot);
+            refresh_after_button_edit(&s, &m, slot_usz);
             mark_dirty(&w);
+            if let Some(w_now) = w.upgrade() {
+                w_now.set_button_type_picker_open(false);
+            }
+        });
+    }
+    {
+        let w = window.as_weak();
+        window.on_button_type_picker_dismissed(move || {
+            if let Some(w_now) = w.upgrade() {
+                w_now.set_button_type_picker_open(false);
+            }
         });
     }
 

@@ -688,6 +688,24 @@ struct ButtonRow {
     log-pressed: bool,
 }
 
+// One row in the category-grouped button-type picker. Headers
+// (`is-header: true`) carry only `label`; entries carry `label` and
+// `type-index` (the wire byte). Built once on the Rust side from
+// `ButtonTypeCategory::entries()`.
+struct TypePickerEntry {
+    is-header: bool,
+    label: string,
+    type-index: int,
+}
+
+// Per-slot blocked-ness for each entry — kept as a separate flat list
+// because Slint structs can't nest array fields. Length matches the
+// entries model (so header rows carry `blocked: false`, ignored).
+struct TypeBlockedInfo {
+    blocked: bool,
+    reason: string,
+}
+
 component LiveDot inherits Rectangle {
     in property <bool> on;
     in property <color> on-color: Palette.accent;
@@ -718,6 +736,50 @@ export global BtnCols {
     out property <length> w-debounce: 76px;
 }
 
+// Button-type opener cell — same visual mass as a `CycleCell`-in-compact
+// mode, but a click opens the category-grouped picker rather than
+// stepping the cycle.
+component TypePickerCell inherits Rectangle {
+    in property <string> value-label;
+    in property <length> value-width: 100px;
+    callback opened();
+
+    height: 26px;
+
+    Rectangle {
+        width: root.value-width;
+        height: 22px;
+        background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 3px;
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 6px;
+            spacing: 4px;
+            alignment: start;
+            Text {
+                text: root.value-label;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            LucideIcon {
+                source: @image-url("../assets/icons/chevron-down.svg");
+                tint: Palette.text-dim;
+                size: 10px;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+        ta := TouchArea {
+            clicked => { root.opened(); }
+        }
+    }
+}
+
 component HeaderCell inherits Rectangle {
     in property <string> text;
     in property <length> col-width: 32px;
@@ -739,7 +801,7 @@ component ButtonRowView inherits Rectangle {
     in property <ButtonRow> entry;
     in property <int> slot;
     callback physical-edited(int /* slot */, int /* new value */);
-    callback type-cycled(int);
+    callback type-picker-opened(int);
     callback shift-cycled(int);
     callback inverted-toggled(int);
     callback disabled-toggled(int);
@@ -774,11 +836,10 @@ component ButtonRowView inherits Rectangle {
                 field-width: BtnCols.w-phy;
                 edited(v) => { root.physical-edited(root.slot, v); }
             }
-            CycleCell {
-                compact: true;
+            TypePickerCell {
                 value-label: root.entry.type-label;
                 value-width: BtnCols.w-type;
-                cycled => { root.type-cycled(root.slot); }
+                opened => { root.type-picker-opened(root.slot); }
             }
             CycleCell {
                 compact: true;
@@ -893,7 +954,7 @@ component ButtonsHeaderRow inherits Rectangle {
 component ButtonsTab inherits Rectangle {
     in property <[ButtonRow]> buttons;
     callback physical-edited(int, int);
-    callback type-cycled(int);
+    callback type-picker-opened(int);
     callback shift-cycled(int);
     callback inverted-toggled(int);
     callback disabled-toggled(int);
@@ -933,7 +994,7 @@ component ButtonsTab inherits Rectangle {
                     entry: btn-data;
                     slot: i;
                     physical-edited(s, v) => { root.physical-edited(s, v); }
-                    type-cycled(s) => { root.type-cycled(s); }
+                    type-picker-opened(s) => { root.type-picker-opened(s); }
                     shift-cycled(s) => { root.shift-cycled(s); }
                     inverted-toggled(s) => { root.inverted-toggled(s); }
                     disabled-toggled(s) => { root.disabled-toggled(s); }
@@ -1575,6 +1636,119 @@ component ToastBanner inherits Rectangle {
     }
 }
 
+// --- Button-type picker overlay ----------------------------------------
+//
+// Modal-style centred picker. Slint popups are awkward to position
+// near a specific cell across a scrolling Flickable, so we use a
+// dialog-style overlay (matching the AboutDialog pattern). Blocked
+// entries grey out and surface the reason inline so the user sees
+// *why* a choice is rejected instead of the old cycle silently
+// skipping past it.
+component TypePickerOverlay inherits Rectangle {
+    in property <[TypePickerEntry]> entries;
+    in property <[TypeBlockedInfo]> blocked-info;
+    in property <int> slot;
+    in property <int> current-type-index;
+    callback picked(int /* slot */, int /* type-index */);
+    callback dismissed();
+
+    background: #00000088;
+
+    TouchArea {
+        clicked => { root.dismissed(); }
+    }
+
+    Rectangle {
+        background: Palette.bg-panel;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 8px;
+        width: 360px;
+        height: 560px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        // Block clicks from falling through to the backdrop.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: 14px;
+            spacing: 6px;
+            Text {
+                text: "Pick button function";
+                color: Palette.accent;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            Text {
+                text: "Greyed entries conflict with another slot on the same physical input.";
+                color: Palette.text-dim;
+                font-size: 10px;
+                wrap: word-wrap;
+            }
+            Rectangle { height: 2px; }
+            Flickable {
+                vertical-stretch: 1;
+                viewport-height: root.entries.length * 26px;
+                VerticalLayout {
+                    spacing: 1px;
+                    for entry[i] in root.entries: Rectangle {
+                        height: entry.is-header ? 22px : 24px;
+                        property <bool> is-blocked: !entry.is-header
+                            && root.blocked-info[entry.type-index].blocked;
+                        property <bool> is-current: !entry.is-header
+                            && entry.type-index == root.current-type-index;
+                        background: entry.is-header
+                            ? transparent
+                            : (entry-ta.has-hover && !is-blocked
+                                ? Palette.bg-cell-hover
+                                : (is-current ? Palette.bg-cell-alt : transparent));
+                        border-color: is-current ? Palette.accent : transparent;
+                        border-width: is-current ? 1px : 0px;
+                        border-radius: 3px;
+                        HorizontalLayout {
+                            padding-left: entry.is-header ? 4px : 22px;
+                            padding-right: 8px;
+                            spacing: 6px;
+                            alignment: start;
+                            Text {
+                                text: entry.label;
+                                color: entry.is-header
+                                    ? Palette.text-dim
+                                    : (is-blocked ? Palette.text-dim
+                                       : (is-current ? Palette.accent : Palette.text));
+                                font-size: entry.is-header ? 10px : 12px;
+                                font-weight: entry.is-header ? 600 : 400;
+                                letter-spacing: entry.is-header ? 0.5px : 0px;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            if !entry.is-header && is-blocked: Text {
+                                text: root.blocked-info[entry.type-index].reason;
+                                color: Palette.text-dim;
+                                font-size: 10px;
+                                vertical-alignment: center;
+                            }
+                        }
+                        entry-ta := TouchArea {
+                            enabled: !entry.is-header && !is-blocked;
+                            clicked => { root.picked(root.slot, entry.type-index); }
+                        }
+                    }
+                }
+            }
+            Rectangle { height: 4px; }
+            HorizontalLayout {
+                alignment: end;
+                PillButton {
+                    label: "Cancel";
+                    clicked => { root.dismissed(); }
+                }
+            }
+        }
+    }
+}
+
 // --- About dialog -------------------------------------------------------
 component AboutDialog inherits Rectangle {
     in property <string> app-version;
@@ -1903,6 +2077,15 @@ export component AppWindow inherits Window {
     in property <string> supported-fw: "";
     in-out property <bool> about-open: false;
 
+    // Button-type picker (issue #7). `entries` is static, set once at
+    // startup; `blocked-info` and `current-type-index` refresh whenever
+    // the picker opens.
+    in property <[TypePickerEntry]> button-type-picker-entries: [];
+    in property <[TypeBlockedInfo]> button-type-picker-blocked: [];
+    in property <bool> button-type-picker-open: false;
+    in property <int> button-type-picker-slot: 0;
+    in property <int> button-type-picker-current: 0;
+
     callback read-clicked();
     callback write-clicked();
     callback save-clicked();
@@ -1920,7 +2103,9 @@ export component AppWindow inherits Window {
     callback axis-resolution-cycled(int);
     callback axis-channel-cycled(int);
     callback button-physical-edited(int, int);
-    callback button-type-cycled(int);
+    callback button-type-picker-opened(int /* slot */);
+    callback button-type-picked(int /* slot */, int /* type-index */);
+    callback button-type-picker-dismissed();
     callback button-shift-cycled(int);
     callback button-inverted-toggled(int);
     callback button-disabled-toggled(int);
@@ -2055,7 +2240,7 @@ export component AppWindow inherits Window {
             if root.active-tab == 2: ButtonsTab {
                 buttons: root.buttons;
                 physical-edited(s, v) => { root.button-physical-edited(s, v); }
-                type-cycled(s) => { root.button-type-cycled(s); }
+                type-picker-opened(s) => { root.button-type-picker-opened(s); }
                 shift-cycled(s) => { root.button-shift-cycled(s); }
                 inverted-toggled(s) => { root.button-inverted-toggled(s); }
                 disabled-toggled(s) => { root.button-disabled-toggled(s); }
@@ -2101,5 +2286,14 @@ export component AppWindow inherits Window {
             supported-fw: root.supported-fw;
             closed => { root.about-open = false; }
         }
+    }
+
+    if root.button-type-picker-open: TypePickerOverlay {
+        entries: root.button-type-picker-entries;
+        blocked-info: root.button-type-picker-blocked;
+        slot: root.button-type-picker-slot;
+        current-type-index: root.button-type-picker-current;
+        picked(slot, type-index) => { root.button-type-picked(slot, type-index); }
+        dismissed => { root.button-type-picker-dismissed(); }
     }
 }

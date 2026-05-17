@@ -20,7 +20,7 @@ use crate::wire::config::{Button, MAX_BUTTONS_NUM};
 /// Wire values for `button_type_t`. Variants follow the enum order in
 /// `vendored/common_types.h::button_t.type` exactly so `to_u8()` /
 /// `from_u8()` are zero-cost casts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ButtonType {
     Normal = 0,
@@ -188,6 +188,155 @@ impl ButtonType {
     pub fn all() -> impl Iterator<Item = Self> {
         (0u8..=35).filter_map(Self::from_u8)
     }
+
+    /// Category the type belongs to in the category-grouped picker.
+    /// Ordering follows the picker's display order (Basic / Gestures /
+    /// Toggle switches / POV 1..4 / Encoder / Radio / Sequential /
+    /// Logic) and groups POV3 Center back with POV3 even though its
+    /// wire byte was appended late.
+    #[must_use]
+    pub fn category(self) -> ButtonTypeCategory {
+        use ButtonTypeCategory::{
+            Basic, Encoder, Gestures, Logic, Pov1, Pov2, Pov3, Pov4, Radio, Sequential,
+            ToggleSwitches,
+        };
+        match self {
+            Self::Normal | Self::Toggle => Basic,
+            Self::Tap | Self::DoubleTap => Gestures,
+            Self::ToggleSwitch | Self::ToggleSwitchOn | Self::ToggleSwitchOff => ToggleSwitches,
+            Self::Pov1Up | Self::Pov1Right | Self::Pov1Down | Self::Pov1Left | Self::Pov1Center => {
+                Pov1
+            }
+            Self::Pov2Up | Self::Pov2Right | Self::Pov2Down | Self::Pov2Left | Self::Pov2Center => {
+                Pov2
+            }
+            Self::Pov3Up
+            | Self::Pov3Right
+            | Self::Pov3Down
+            | Self::Pov3Left
+            | Self::Pov3Center => Pov3,
+            Self::Pov4Up
+            | Self::Pov4Right
+            | Self::Pov4Down
+            | Self::Pov4Left
+            | Self::Pov4Center => Pov4,
+            Self::EncoderInputA | Self::EncoderInputB => Encoder,
+            Self::Radio1 | Self::Radio2 | Self::Radio3 | Self::Radio4 => Radio,
+            Self::SequentialToggle | Self::SequentialButton => Sequential,
+            Self::Logic => Logic,
+        }
+    }
+}
+
+/// Visual grouping driving the category-grouped function picker.
+/// Display order matches the iteration order of [`ButtonTypeCategory::all`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ButtonTypeCategory {
+    Basic,
+    Gestures,
+    ToggleSwitches,
+    Pov1,
+    Pov2,
+    Pov3,
+    Pov4,
+    Encoder,
+    Radio,
+    Sequential,
+    Logic,
+}
+
+impl ButtonTypeCategory {
+    /// Header label shown above the category's entries in the picker.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Basic => "Basic",
+            Self::Gestures => "Gestures",
+            Self::ToggleSwitches => "Toggle switches",
+            Self::Pov1 => "POV 1",
+            Self::Pov2 => "POV 2",
+            Self::Pov3 => "POV 3",
+            Self::Pov4 => "POV 4",
+            Self::Encoder => "Encoder",
+            Self::Radio => "Radio",
+            Self::Sequential => "Sequential",
+            Self::Logic => "Logic",
+        }
+    }
+
+    /// Iterate categories in display order.
+    pub fn all() -> impl Iterator<Item = Self> {
+        [
+            Self::Basic,
+            Self::Gestures,
+            Self::ToggleSwitches,
+            Self::Pov1,
+            Self::Pov2,
+            Self::Pov3,
+            Self::Pov4,
+            Self::Encoder,
+            Self::Radio,
+            Self::Sequential,
+            Self::Logic,
+        ]
+        .into_iter()
+    }
+
+    /// All button types in the category, in display order. POV centres
+    /// that were appended late on the wire are surfaced adjacent to the
+    /// rest of their POV group rather than at the wire-byte position.
+    #[must_use]
+    pub fn entries(self) -> &'static [ButtonType] {
+        match self {
+            Self::Basic => &[ButtonType::Normal, ButtonType::Toggle],
+            Self::Gestures => &[ButtonType::Tap, ButtonType::DoubleTap],
+            Self::ToggleSwitches => &[
+                ButtonType::ToggleSwitch,
+                ButtonType::ToggleSwitchOn,
+                ButtonType::ToggleSwitchOff,
+            ],
+            Self::Pov1 => &[
+                ButtonType::Pov1Up,
+                ButtonType::Pov1Right,
+                ButtonType::Pov1Down,
+                ButtonType::Pov1Left,
+                ButtonType::Pov1Center,
+            ],
+            Self::Pov2 => &[
+                ButtonType::Pov2Up,
+                ButtonType::Pov2Right,
+                ButtonType::Pov2Down,
+                ButtonType::Pov2Left,
+                ButtonType::Pov2Center,
+            ],
+            Self::Pov3 => &[
+                ButtonType::Pov3Up,
+                ButtonType::Pov3Right,
+                ButtonType::Pov3Down,
+                ButtonType::Pov3Left,
+                ButtonType::Pov3Center,
+            ],
+            Self::Pov4 => &[
+                ButtonType::Pov4Up,
+                ButtonType::Pov4Right,
+                ButtonType::Pov4Down,
+                ButtonType::Pov4Left,
+                ButtonType::Pov4Center,
+            ],
+            Self::Encoder => &[ButtonType::EncoderInputA, ButtonType::EncoderInputB],
+            Self::Radio => &[
+                ButtonType::Radio1,
+                ButtonType::Radio2,
+                ButtonType::Radio3,
+                ButtonType::Radio4,
+            ],
+            Self::Sequential => &[
+                ButtonType::SequentialToggle,
+                ButtonType::SequentialButton,
+            ],
+            Self::Logic => &[ButtonType::Logic],
+        }
+    }
 }
 
 /// Outcome of `physical_assignment_blocked`. Either the candidate type
@@ -297,6 +446,24 @@ pub const LOGIC: u8 = BUTTON_TYPE_LOGIC;
 mod tests {
     use super::*;
     use crate::wire::config::DEV_CONFIG_SIZE;
+
+    #[test]
+    fn every_button_type_has_a_category() {
+        // Closed-enum match — a new variant added without a category arm
+        // fails to compile. Belt-and-braces this also asserts each variant
+        // shows up exactly once across `ButtonTypeCategory::entries()`.
+        let mut seen = std::collections::HashSet::new();
+        for cat in ButtonTypeCategory::all() {
+            for &bt in cat.entries() {
+                assert!(seen.insert(bt), "{bt:?} appears in two categories");
+                assert_eq!(bt.category(), cat);
+            }
+        }
+        // Every wire-known type made it into a category's entries list.
+        for bt in ButtonType::all() {
+            assert!(seen.contains(&bt), "{bt:?} missing from category entries");
+        }
+    }
 
     #[test]
     fn all_yields_every_known_variant_in_order() {
