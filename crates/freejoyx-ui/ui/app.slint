@@ -6,21 +6,29 @@
 // placeholder so the tab strip is visible.
 
 // --- Palette ------------------------------------------------------------
-global Palette {
-    out property <color> bg-window: #000000;
-    out property <color> bg-panel: #2a2a32;
-    out property <color> bg-cell: #1a1a1e;
-    out property <color> bg-cell-alt: #1e1e22;
-    out property <color> bg-cell-hover: #1f1f23;
-    out property <color> bg-pill: #1e1e22;
-    out property <color> bg-pill-hover: #2e2e34;
-    out property <color> border: #3a3a44;
-    out property <color> text: #c8c8d0;
-    out property <color> text-dim: #8a8a96;
-    out property <color> accent: #ffcc33;
-    out property <color> error: #d65a5a;
-    out property <color> error-bg: #553333;
-    out property <color> success: #6cb86c;
+//
+// Theme switch. `dark` toggles every colour token between the dark
+// cockpit palette and a light alternate. Rust side (settings.rs) loads
+// the persisted choice at startup and writes it back when the Help
+// menu's "Switch to … Mode" item is clicked.
+export global Palette {
+    in-out property <bool> dark: true;
+
+    out property <color> bg-window: dark ? #000000 : #e8e8ec;
+    out property <color> bg-panel: dark ? #2a2a32 : #f4f4f6;
+    out property <color> bg-cell: dark ? #1a1a1e : #ffffff;
+    out property <color> bg-cell-alt: dark ? #1e1e22 : #f8f8fa;
+    out property <color> bg-cell-hover: dark ? #1f1f23 : #ececf0;
+    out property <color> bg-pill: dark ? #1e1e22 : #ebebef;
+    out property <color> bg-pill-hover: dark ? #2e2e34 : #dcdce0;
+    out property <color> border: dark ? #3a3a44 : #c0c0c8;
+    out property <color> text: dark ? #c8c8d0 : #1a1a1e;
+    out property <color> text-dim: dark ? #8a8a96 : #5a5a64;
+    out property <color> accent: dark ? #ffcc33 : #cc8800;
+    out property <color> error: dark ? #d65a5a : #a02828;
+    out property <color> error-bg: dark ? #553333 : #f4caca;
+    out property <color> success: dark ? #6cb86c : #2a7a2a;
+    out property <color> bg-warn: dark ? #4a3a1a : #fbe9bf;
 }
 
 // --- Reusable controls --------------------------------------------------
@@ -1356,7 +1364,7 @@ component ToastBanner inherits Rectangle {
     height: 36px;
     background:
         root.severity == 3 ? Palette.error-bg
-        : root.severity == 2 ? #4a3a1a
+        : root.severity == 2 ? Palette.bg-warn
         : Palette.bg-cell;
     border-color:
         root.severity == 3 ? Palette.error
@@ -1485,6 +1493,7 @@ component Toolbar inherits Rectangle {
     callback device-picked(string /* serial */);
     callback about-clicked();
     callback open-log-folder();
+    callback theme-toggled();
 
     background: Palette.bg-panel;
     border-color: Palette.border;
@@ -1634,6 +1643,26 @@ component Toolbar inherits Rectangle {
                                 }
                             }
                         }
+                        Rectangle {
+                            height: 28px;
+                            background: theme-ta.has-hover ? Palette.bg-cell-hover : transparent;
+                            border-radius: 3px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                Text {
+                                    text: Palette.dark ? "Switch to Light Mode" : "Switch to Dark Mode";
+                                    color: Palette.text;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            theme-ta := TouchArea {
+                                clicked => {
+                                    root.theme-toggled();
+                                    help-popup.close();
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1714,6 +1743,7 @@ export component AppWindow inherits Window {
     callback advanced-pid-edited(string);
     callback toast-dismissed();
     callback open-log-folder();
+    callback theme-toggled();
 
     in-out property <int> active-tab: 0;
 
@@ -1737,6 +1767,7 @@ export component AppWindow inherits Window {
             device-picked(s) => { root.device-picked(s); }
             about-clicked => { root.about-open = true; }
             open-log-folder => { root.open-log-folder(); }
+            theme-toggled => { root.theme-toggled(); }
         }
 
         if root.toast-severity > 0: ToastBanner {

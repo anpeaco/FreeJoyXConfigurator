@@ -29,14 +29,15 @@ use freejoyx_core::wire::{
     SUPPORTED_FIRMWARE_VERSION, USED_PINS_NUM,
 };
 use freejoyx_device::{spawn_for_serial, Command, DeviceCandidate, DeviceEvent, DeviceHandle};
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Global, Model, ModelRc, SharedString, VecModel};
 
 use crate::advanced as advanced_glue;
 use crate::buttons as buttons_glue;
 use crate::encoders as encoders_glue;
+use crate::settings;
 use crate::{
-    AppWindow, AxisRow, ButtonRow, DeviceOption, EncoderRow, FastEncoderRow, PinRow, ShiftRegRow,
-    ShiftSlot, TimerField,
+    AppWindow, AxisRow, ButtonRow, DeviceOption, EncoderRow, FastEncoderRow, Palette, PinRow,
+    ShiftRegRow, ShiftSlot, TimerField,
 };
 
 /// State the UI mutates outside of Slint's reactivity. Held inside a
@@ -181,6 +182,7 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     advanced_glue::wire_callbacks(&window, &state, &candidates_model);
     wire_toast_callback(&window);
     wire_log_folder_callback(&window);
+    wire_theme_callback(&window);
 
     // Ask the worker for its candidate list up-front so the picker
     // dropdown has something to show on first open without the user
@@ -768,6 +770,21 @@ fn wire_log_folder_callback(window: &AppWindow) {
         if let Err(e) = crate::log_dir::open_in_file_manager() {
             tracing::warn!("could not open log folder: {e}");
         }
+    });
+}
+
+/// Apply the persisted theme preference and wire the Help-menu toggle.
+/// The Palette global drives every colour in `app.slint`, so flipping
+/// `Palette::dark` is enough to repaint the whole window.
+fn wire_theme_callback(window: &AppWindow) {
+    Palette::get(window).set_dark(settings::load_dark());
+    let weak = window.as_weak();
+    window.on_theme_toggled(move || {
+        let Some(w) = weak.upgrade() else { return };
+        let palette = Palette::get(&w);
+        let next = !palette.get_dark();
+        palette.set_dark(next);
+        settings::save_dark(next);
     });
 }
 

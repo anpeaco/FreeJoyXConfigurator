@@ -26,6 +26,7 @@ pub mod app;
 mod buttons;
 mod encoders;
 pub mod log_dir;
+mod settings;
 
 pub use app::run;
 
