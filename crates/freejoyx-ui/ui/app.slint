@@ -561,6 +561,327 @@ component AxesTab inherits Rectangle {
     }
 }
 
+// --- Buttons tab -------------------------------------------------------
+//
+// 128 button slots. Each row carries:
+//
+//   slot # | physical input | type cycle | shift cycle | inverted | disabled | live
+//
+// LOGIC slots reveal a second row for op + source B + debounce timer
+// + validator badge. The per-physical coexistence rule
+// (F103_GESTURE_PLAN.md: only NORMAL/TAP/DOUBLE_TAP may share a
+// physical) is enforced by `physical_assignment_blocked` in
+// freejoyx-core::domain::buttons — if the user tries to step the
+// type cycle to a blocked variant, the cycle skips past it.
+struct ButtonRow {
+    physical-num: int,
+    type-label: string,
+    type-index: int,
+    is-logic: bool,
+    shift-modificator: int,
+    is-inverted: bool,
+    is-disabled: bool,
+    // LOGIC-only fields (ignored when is-logic == false)
+    src-b: int,
+    op-label: string,
+    op-index: int,
+    debounce-label: string,
+    debounce-index: int,
+    logic-error: string,
+    // Live state
+    phy-pressed: bool,
+    log-pressed: bool,
+}
+
+component LiveDot inherits Rectangle {
+    in property <bool> on;
+    in property <color> on-color: Palette.accent;
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    background: root.on ? root.on-color : Palette.bg-cell-alt;
+    border-color: Palette.border;
+    border-width: 1px;
+}
+
+component ButtonRowView inherits Rectangle {
+    in property <ButtonRow> entry;
+    in property <int> slot;
+    callback physical-edited(int /* slot */, int /* new value */);
+    callback type-cycled(int);
+    callback shift-cycled(int);
+    callback inverted-toggled(int);
+    callback disabled-toggled(int);
+    callback src-b-edited(int, int);
+    callback op-cycled(int);
+    callback debounce-cycled(int);
+
+    height: root.entry.is-logic ? 70px : 36px;
+    background: Palette.bg-cell;
+    border-color: root.entry.logic-error != "" ? Palette.error : Palette.border;
+    border-width: 1px;
+    border-radius: 4px;
+
+    VerticalLayout {
+        padding: 4px;
+        spacing: 2px;
+
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Text {
+                text: (root.slot + 1) + ".";
+                color: Palette.text-dim;
+                font-size: 11px;
+                width: 32px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+            NumberCell {
+                label: "phy";
+                value: root.entry.physical-num;
+                field-width: 52px;
+                edited(v) => { root.physical-edited(root.slot, v); }
+            }
+            CycleCell {
+                label: "type";
+                value-label: root.entry.type-label;
+                value-width: 140px;
+                cycled => { root.type-cycled(root.slot); }
+            }
+            CycleCell {
+                label: "shift";
+                value-label: root.entry.shift-modificator;
+                value-width: 30px;
+                cycled => { root.shift-cycled(root.slot); }
+            }
+            CheckCell {
+                label: "Inv";
+                checked: root.entry.is-inverted;
+                toggled => { root.inverted-toggled(root.slot); }
+            }
+            CheckCell {
+                label: "Dis";
+                checked: root.entry.is-disabled;
+                toggled => { root.disabled-toggled(root.slot); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            LiveDot {
+                on: root.entry.phy-pressed;
+                y: (parent.height - self.height) / 2;
+            }
+            LiveDot {
+                on: root.entry.log-pressed;
+                on-color: Palette.success;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        if root.entry.is-logic: HorizontalLayout {
+            spacing: 6px;
+            padding-left: 38px;
+            Text {
+                text: "logic:";
+                color: Palette.text-dim;
+                font-size: 11px;
+                width: 40px;
+                vertical-alignment: center;
+            }
+            CycleCell {
+                label: "op";
+                value-label: root.entry.op-label;
+                value-width: 90px;
+                cycled => { root.op-cycled(root.slot); }
+            }
+            NumberCell {
+                label: "src B";
+                value: root.entry.src-b;
+                field-width: 52px;
+                edited(v) => { root.src-b-edited(root.slot, v); }
+            }
+            CycleCell {
+                label: "debounce";
+                value-label: root.entry.debounce-label;
+                value-width: 70px;
+                cycled => { root.debounce-cycled(root.slot); }
+            }
+            Rectangle {
+                visible: root.entry.logic-error != "";
+                height: 22px;
+                background: Palette.error;
+                border-radius: 3px;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    Text {
+                        text: root.entry.logic-error;
+                        color: #ffffff;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+}
+
+component ButtonsTab inherits Rectangle {
+    in property <[ButtonRow]> buttons;
+    callback physical-edited(int, int);
+    callback type-cycled(int);
+    callback shift-cycled(int);
+    callback inverted-toggled(int);
+    callback disabled-toggled(int);
+    callback src-b-edited(int, int);
+    callback op-cycled(int);
+    callback debounce-cycled(int);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+
+        Text {
+            text: "Buttons + Logic";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "128 button slots. Type cycle skips assignments blocked by the per-physical gesture rule. LOGIC rows expose op / Source B / debounce. Amber dot = physical pressed; green dot = logical state.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        Flickable {
+            // 38 px for a plain row, 72 px when the LOGIC sub-row is visible.
+            // Pre-compute a conservative bound rather than a per-row sum:
+            // 128 × 72 = 9216 px will always cover, regardless of LOGIC mix.
+            viewport-height: buttons.length * 72px;
+            VerticalLayout {
+                spacing: 2px;
+                for btn-data[i] in root.buttons: ButtonRowView {
+                    entry: btn-data;
+                    slot: i;
+                    physical-edited(s, v) => { root.physical-edited(s, v); }
+                    type-cycled(s) => { root.type-cycled(s); }
+                    shift-cycled(s) => { root.shift-cycled(s); }
+                    inverted-toggled(s) => { root.inverted-toggled(s); }
+                    disabled-toggled(s) => { root.disabled-toggled(s); }
+                    src-b-edited(s, v) => { root.src-b-edited(s, v); }
+                    op-cycled(s) => { root.op-cycled(s); }
+                    debounce-cycled(s) => { root.debounce-cycled(s); }
+                }
+            }
+        }
+    }
+}
+
+// --- Shifts & Timers tab -----------------------------------------------
+struct ShiftSlot {
+    label: string,
+    button-index: int,
+}
+
+struct TimerField {
+    label: string,
+    hint: string,
+    value-ms: int,
+}
+
+component ShiftsTimersTab inherits Rectangle {
+    in property <[ShiftSlot]> shifts;
+    in property <[TimerField]> timers;
+    callback shift-edited(int /* slot */, int /* button index */);
+    callback timer-edited(int /* index */, int /* ms */);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        Text {
+            text: "Shifts & Timers";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Shifts pick the button index that activates each modifier slot (−1 = unused). Timers configure debounce / tap windows; values are in milliseconds.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: "Shift modifier slots";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        for shift-data[i] in root.shifts: Rectangle {
+            height: 30px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: shift-data.label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    width: 80px;
+                    vertical-alignment: center;
+                }
+                NumberCell {
+                    label: "button";
+                    value: shift-data.button-index;
+                    field-width: 64px;
+                    edited(v) => { root.shift-edited(i, v); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle { height: 8px; }
+        Text {
+            text: "Global timers (ms)";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        for timer-data[i] in root.timers: Rectangle {
+            height: 30px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: timer-data.label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    width: 130px;
+                    vertical-alignment: center;
+                }
+                NumberCell {
+                    label: "ms";
+                    value: timer-data.value-ms;
+                    field-width: 72px;
+                    edited(v) => { root.timer-edited(i, v); }
+                }
+                Text {
+                    text: timer-data.hint;
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
 // --- Placeholder tab body for not-yet-implemented surfaces --------------
 component PlaceholderTab inherits Rectangle {
     in property <string> tab-name;
@@ -667,6 +988,9 @@ export component AppWindow inherits Window {
     in property <[PinRow]> pins: [];
     in property <[string]> function-labels: [];
     in property <[AxisRow]> axes: [];
+    in property <[ButtonRow]> buttons: [];
+    in property <[ShiftSlot]> shifts: [];
+    in property <[TimerField]> timers: [];
 
     callback read-clicked();
     callback write-clicked();
@@ -684,6 +1008,16 @@ export component AppWindow inherits Window {
     callback axis-dyn-deadband-toggled(int);
     callback axis-resolution-cycled(int);
     callback axis-channel-cycled(int);
+    callback button-physical-edited(int, int);
+    callback button-type-cycled(int);
+    callback button-shift-cycled(int);
+    callback button-inverted-toggled(int);
+    callback button-disabled-toggled(int);
+    callback button-src-b-edited(int, int);
+    callback button-op-cycled(int);
+    callback button-debounce-cycled(int);
+    callback shift-edited(int, int);
+    callback timer-edited(int, int);
 
     in-out property <int> active-tab: 0;
 
@@ -721,13 +1055,13 @@ export component AppWindow inherits Window {
                 }
                 TabButton {
                     label: "Buttons + Logic";
-                    enabled: false;
                     selected: root.active-tab == 2;
+                    clicked => { root.active-tab = 2; }
                 }
                 TabButton {
                     label: "Shifts & Timers";
-                    enabled: false;
                     selected: root.active-tab == 3;
+                    clicked => { root.active-tab = 3; }
                 }
                 TabButton {
                     label: "Encoders";
@@ -775,8 +1109,23 @@ export component AppWindow inherits Window {
                 resolution-cycled(s) => { root.axis-resolution-cycled(s); }
                 channel-cycled(s) => { root.axis-channel-cycled(s); }
             }
-            if root.active-tab == 2: PlaceholderTab { tab-name: "Buttons + Logic"; due: "Slice 7"; }
-            if root.active-tab == 3: PlaceholderTab { tab-name: "Shifts & Timers"; due: "Slice 7"; }
+            if root.active-tab == 2: ButtonsTab {
+                buttons: root.buttons;
+                physical-edited(s, v) => { root.button-physical-edited(s, v); }
+                type-cycled(s) => { root.button-type-cycled(s); }
+                shift-cycled(s) => { root.button-shift-cycled(s); }
+                inverted-toggled(s) => { root.button-inverted-toggled(s); }
+                disabled-toggled(s) => { root.button-disabled-toggled(s); }
+                src-b-edited(s, v) => { root.button-src-b-edited(s, v); }
+                op-cycled(s) => { root.button-op-cycled(s); }
+                debounce-cycled(s) => { root.button-debounce-cycled(s); }
+            }
+            if root.active-tab == 3: ShiftsTimersTab {
+                shifts: root.shifts;
+                timers: root.timers;
+                shift-edited(i, v) => { root.shift-edited(i, v); }
+                timer-edited(i, v) => { root.timer-edited(i, v); }
+            }
             if root.active-tab == 4: PlaceholderTab { tab-name: "Encoders"; due: "Slice 8"; }
             if root.active-tab == 5: PlaceholderTab { tab-name: "Shift Registers"; due: "Slice 8"; }
             if root.active-tab == 6: PlaceholderTab { tab-name: "Advanced Settings"; due: "Slice 9"; }

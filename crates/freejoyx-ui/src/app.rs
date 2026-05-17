@@ -28,21 +28,22 @@ use freejoyx_core::wire::{DeviceConfig, ParamsReport, MAX_AXIS_NUM, USED_PINS_NU
 use freejoyx_device::{spawn_for_serial, Command, DeviceCandidate, DeviceEvent, DeviceHandle};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::{AppWindow, AxisRow, PinRow};
+use crate::buttons as buttons_glue;
+use crate::{AppWindow, AxisRow, ButtonRow, PinRow, ShiftSlot, TimerField};
 
 /// State the UI mutates outside of Slint's reactivity. Held inside a
 /// `RefCell` so callbacks (UI thread) and the event-poll tick (also UI
 /// thread) can both borrow mutably without `Mutex` overhead.
-struct State {
+pub(crate) struct State {
     handle: DeviceHandle,
     connected_device: Option<DeviceCandidate>,
-    last_config: Option<Box<DeviceConfig>>,
+    pub(crate) last_config: Option<Box<DeviceConfig>>,
     board: Board,
     status: String,
     /// Most recent params snapshot. Drives the live raw/out columns on
-    /// the Axes tab; `None` until the worker has shipped at least one
-    /// `ParamsTick`.
-    last_params: Option<ParamsReport>,
+    /// the Axes tab and the per-button live dots; `None` until the
+    /// worker has shipped at least one `ParamsTick`.
+    pub(crate) last_params: Option<ParamsReport>,
 }
 
 impl State {
@@ -78,6 +79,15 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     let axis_model: Rc<VecModel<AxisRow>> = Rc::new(VecModel::default());
     window.set_axes(ModelRc::from(axis_model.clone()));
 
+    let button_model: Rc<VecModel<ButtonRow>> = Rc::new(VecModel::default());
+    window.set_buttons(ModelRc::from(button_model.clone()));
+
+    let shift_model: Rc<VecModel<ShiftSlot>> = Rc::new(VecModel::default());
+    window.set_shifts(ModelRc::from(shift_model.clone()));
+
+    let timer_model: Rc<VecModel<TimerField>> = Rc::new(VecModel::default());
+    window.set_timers(ModelRc::from(timer_model.clone()));
+
     // Populate function-label list once — it's static.
     let labels: Vec<SharedString> = PinFunction::all()
         .map(|f| SharedString::from(f.label()))
@@ -89,9 +99,18 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     wire_read_callback(&window, &state);
     wire_write_callback(&window, &state);
     wire_save_callback(&window, &state);
-    wire_load_callback(&window, &state, &pin_model, &axis_model);
+    wire_load_callback(
+        &window,
+        &state,
+        &pin_model,
+        &axis_model,
+        &button_model,
+        &shift_model,
+        &timer_model,
+    );
     wire_axis_callbacks(&window, &state, &axis_model);
     wire_pin_callback(&window, &state, &pin_model);
+    buttons_glue::wire_callbacks(&window, &state, &button_model, &shift_model, &timer_model);
 
     // Poll the worker's event channel from a Slint timer. 100 ms is
     // brisk enough for connect/disconnect responsiveness without
@@ -102,6 +121,9 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
         let weak = window.as_weak();
         let pin_model_for_timer = pin_model.clone();
         let axis_model_for_timer = axis_model.clone();
+        let button_model_for_timer = button_model.clone();
+        let shift_model_for_timer = shift_model.clone();
+        let timer_model_for_timer = timer_model.clone();
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
@@ -110,8 +132,13 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
                 pump_events(
                     &state,
                     &window,
-                    &pin_model_for_timer,
-                    &axis_model_for_timer,
+                    &EventSinks {
+                        pin_model: &pin_model_for_timer,
+                        axis_model: &axis_model_for_timer,
+                        button_model: &button_model_for_timer,
+                        shift_model: &shift_model_for_timer,
+                        timer_model: &timer_model_for_timer,
+                    },
                     &rx,
                 );
             },
@@ -121,13 +148,29 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     window.run()
 }
 
+/// Bundle of Slint models that `pump_events` may need to refresh in
+/// response to a worker event. Grouped into a single struct to keep
+/// the function signature from growing one parameter per slice.
+#[allow(clippy::struct_field_names)]
+struct EventSinks<'a> {
+    pin_model: &'a Rc<VecModel<PinRow>>,
+    axis_model: &'a Rc<VecModel<AxisRow>>,
+    button_model: &'a Rc<VecModel<ButtonRow>>,
+    shift_model: &'a Rc<VecModel<ShiftSlot>>,
+    timer_model: &'a Rc<VecModel<TimerField>>,
+}
+
 fn pump_events(
     state: &Rc<RefCell<State>>,
     window: &AppWindow,
-    pin_model: &Rc<VecModel<PinRow>>,
-    axis_model: &Rc<VecModel<AxisRow>>,
+    sinks: &EventSinks<'_>,
     rx: &std::sync::mpsc::Receiver<DeviceEvent>,
 ) {
+    let pin_model = sinks.pin_model;
+    let axis_model = sinks.axis_model;
+    let button_model = sinks.button_model;
+    let shift_model = sinks.shift_model;
+    let timer_model = sinks.timer_model;
     while let Ok(evt) = rx.try_recv() {
         match evt {
             DeviceEvent::Connected(c) => {
@@ -151,15 +194,22 @@ fn pump_events(
                 window.set_can_write(false);
             }
             DeviceEvent::ParamsTick(p) => {
-                let (cfg_opt, raw, processed) = {
+                let cfg_opt = {
                     let mut s = state.borrow_mut();
-                    let raw = p.raw_axis_data;
-                    let processed = p.axis_data;
                     s.last_params = Some(p);
-                    (s.last_config.clone(), raw, processed)
+                    s.last_config.clone()
                 };
                 if let Some(cfg) = cfg_opt {
-                    refresh_axis_model(axis_model, &cfg, Some((raw, processed)));
+                    let params_snapshot = state.borrow().last_params.clone();
+                    let live = params_snapshot
+                        .as_ref()
+                        .map(|p| (p.raw_axis_data, p.axis_data));
+                    refresh_axis_model(axis_model, &cfg, live);
+                    buttons_glue::refresh_button_model(
+                        button_model,
+                        &cfg,
+                        params_snapshot.as_ref(),
+                    );
                 }
             }
             DeviceEvent::ConfigReceived(cfg) => {
@@ -177,12 +227,16 @@ fn pump_events(
                     .last_params
                     .as_ref()
                     .map(|p| (p.raw_axis_data, p.axis_data));
+                let params_for_buttons = s.last_params.clone();
                 window.set_status_text(SharedString::from(s.status.clone()));
                 window.set_can_write(true);
                 window.set_can_save(true);
                 drop(s);
                 refresh_pin_model(pin_model, &cfg, board);
                 refresh_axis_model(axis_model, &cfg, live);
+                buttons_glue::refresh_button_model(button_model, &cfg, params_for_buttons.as_ref());
+                buttons_glue::refresh_shift_model(shift_model, &cfg);
+                buttons_glue::refresh_timer_model(timer_model, &cfg);
             }
             DeviceEvent::ConfigSent => {
                 let mut s = state.borrow_mut();
@@ -302,16 +356,23 @@ fn wire_save_callback(window: &AppWindow, state: &Rc<RefCell<State>>) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wire_load_callback(
     window: &AppWindow,
     state: &Rc<RefCell<State>>,
     pin_model: &Rc<VecModel<PinRow>>,
     axis_model: &Rc<VecModel<AxisRow>>,
+    button_model: &Rc<VecModel<ButtonRow>>,
+    shift_model: &Rc<VecModel<ShiftSlot>>,
+    timer_model: &Rc<VecModel<TimerField>>,
 ) {
     let state = state.clone();
     let weak = window.as_weak();
     let pin_model = pin_model.clone();
     let axis_model = axis_model.clone();
+    let button_model = button_model.clone();
+    let shift_model = shift_model.clone();
+    let timer_model = timer_model.clone();
     window.on_load_clicked(move || {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("FreeJoyX RON", &["ron"])
@@ -321,7 +382,7 @@ fn wire_load_callback(
         };
         match load_from_file(&path) {
             Ok(cfg) => {
-                let (board, cfg_for_model, live) = {
+                let (board, cfg_for_model, live, params_for_buttons) = {
                     let mut s = state.borrow_mut();
                     let board = Board::from_id(cfg.board_id);
                     s.board = board;
@@ -331,10 +392,18 @@ fn wire_load_callback(
                         .last_params
                         .as_ref()
                         .map(|p| (p.raw_axis_data, p.axis_data));
-                    (board, cfg_box, live)
+                    let params = s.last_params.clone();
+                    (board, cfg_box, live, params)
                 };
                 refresh_pin_model(&pin_model, &cfg_for_model, board);
                 refresh_axis_model(&axis_model, &cfg_for_model, live);
+                buttons_glue::refresh_button_model(
+                    &button_model,
+                    &cfg_for_model,
+                    params_for_buttons.as_ref(),
+                );
+                buttons_glue::refresh_shift_model(&shift_model, &cfg_for_model);
+                buttons_glue::refresh_timer_model(&timer_model, &cfg_for_model);
                 if let Some(w) = weak.upgrade() {
                     w.set_can_save(true);
                     let connected = w.get_connected();

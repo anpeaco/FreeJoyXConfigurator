@@ -22,6 +22,7 @@
 #![allow(clippy::similar_names)] // pin-row variables are intentionally close
 
 pub mod app;
+mod buttons;
 
 pub use app::run;
 
