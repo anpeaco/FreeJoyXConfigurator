@@ -24,7 +24,10 @@ use std::time::Duration;
 
 use freejoyx_core::domain::{validate_pins, AxisFilter, Board, PinConflict, PinFunction};
 use freejoyx_core::persist::{load_from_file, save_to_file};
-use freejoyx_core::wire::{DeviceConfig, ParamsReport, MAX_AXIS_NUM, USED_PINS_NUM};
+use freejoyx_core::wire::{
+    is_supported_firmware_version, DeviceConfig, ParamsReport, MAX_AXIS_NUM,
+    SUPPORTED_FIRMWARE_VERSION, USED_PINS_NUM,
+};
 use freejoyx_device::{spawn_for_serial, Command, DeviceCandidate, DeviceEvent, DeviceHandle};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
@@ -49,6 +52,11 @@ pub(crate) struct State {
     /// the Axes tab and the per-button live dots; `None` until the
     /// worker has shipped at least one `ParamsTick`.
     pub(crate) last_params: Option<ParamsReport>,
+    /// True once we've flagged the currently-connected device as
+    /// running an unsupported firmware version. Cleared on disconnect.
+    /// Prevents the toast from re-asserting itself on every
+    /// `ParamsTick` after the user dismisses it.
+    unsupported_fw_flagged: bool,
 }
 
 impl State {
@@ -60,6 +68,7 @@ impl State {
             board: Board::Bluepill,
             status: "waiting for device…".to_string(),
             last_params: None,
+            unsupported_fw_flagged: false,
         }
     }
 
@@ -95,6 +104,7 @@ impl State {
 /// Propagates any failure from `slint::run_event_loop`. The worker
 /// thread cannot fail to spawn (the panic on OS refusal is fatal at
 /// app startup either way).
+#[allow(clippy::too_many_lines)]
 pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     let (handle, rx) = spawn_for_serial(serial_filter);
 
@@ -126,6 +136,12 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     let candidates_model: Rc<VecModel<DeviceOption>> = Rc::new(VecModel::default());
     window.set_device_candidates(ModelRc::from(candidates_model.clone()));
     window.set_advanced(advanced_glue::empty_advanced_model());
+
+    window.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
+    window.set_build_rev(SharedString::from(env!("FREEJOYX_BUILD_REV")));
+    window.set_supported_fw(SharedString::from(format!(
+        "{SUPPORTED_FIRMWARE_VERSION:04X}"
+    )));
 
     // Populate function-label list once — it's static.
     let labels: Vec<SharedString> = PinFunction::all()
@@ -163,6 +179,8 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
         &shift_reg_model,
     );
     advanced_glue::wire_callbacks(&window, &state, &candidates_model);
+    wire_toast_callback(&window);
+    wire_log_folder_callback(&window);
 
     // Ask the worker for its candidate list up-front so the picker
     // dropdown has something to show on first open without the user
@@ -282,11 +300,13 @@ fn pump_events(
                 let mut s = state.borrow_mut();
                 s.connected_device = None;
                 s.status = "disconnected — waiting for device".to_string();
+                s.unsupported_fw_flagged = false;
                 window.set_connected(false);
                 window.set_device_summary(SharedString::from("no device"));
                 window.set_status_text(SharedString::from(s.status.clone()));
                 window.set_can_read(false);
                 window.set_can_write(false);
+                clear_toast(window);
             }
             DeviceEvent::ParamsTick(p) => {
                 let (cfg_opt, version_triple) = {
@@ -296,6 +316,23 @@ fn pump_events(
                         p.freejoyx_version_minor,
                         p.freejoyx_version_patch,
                     );
+                    let fw = p.firmware_version;
+                    if !is_supported_firmware_version(fw) && !s.unsupported_fw_flagged {
+                        s.unsupported_fw_flagged = true;
+                        set_toast(
+                            window,
+                            ToastSeverity::Error,
+                            &format!(
+                                "Unsupported firmware 0x{fw:04X}. \
+                                FreeJoyXConfigurator v0.1 only supports mask group \
+                                0x{:04X}. Use the Qt configurator (FreeJoyConfiguratorQt) \
+                                for legacy boards on the 0x17XX line.",
+                                SUPPORTED_FIRMWARE_VERSION & 0xFFF0
+                            ),
+                        );
+                        window.set_can_read(false);
+                        window.set_can_write(false);
+                    }
                     s.last_params = Some(p);
                     (s.last_config.clone(), triple)
                 };
@@ -694,6 +731,44 @@ fn build_axis_row(
         live_raw,
         live_out,
     }
+}
+
+/// Toast severity codes mirrored from the Slint side (0=hidden,
+/// 1=info, 2=warn, 3=error).
+#[derive(Copy, Clone)]
+enum ToastSeverity {
+    #[allow(dead_code)]
+    Info = 1,
+    #[allow(dead_code)]
+    Warn = 2,
+    Error = 3,
+}
+
+fn set_toast(window: &AppWindow, severity: ToastSeverity, message: &str) {
+    window.set_toast_severity(severity as i32);
+    window.set_toast_message(SharedString::from(message));
+}
+
+fn clear_toast(window: &AppWindow) {
+    window.set_toast_severity(0);
+    window.set_toast_message(SharedString::from(""));
+}
+
+fn wire_toast_callback(window: &AppWindow) {
+    let weak = window.as_weak();
+    window.on_toast_dismissed(move || {
+        if let Some(w) = weak.upgrade() {
+            clear_toast(&w);
+        }
+    });
+}
+
+fn wire_log_folder_callback(window: &AppWindow) {
+    window.on_open_log_folder(move || {
+        if let Err(e) = crate::log_dir::open_in_file_manager() {
+            tracing::warn!("could not open log folder: {e}");
+        }
+    });
 }
 
 fn refresh_pin_model(model: &Rc<VecModel<PinRow>>, cfg: &DeviceConfig, board: Board) {

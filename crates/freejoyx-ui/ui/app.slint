@@ -1339,6 +1339,135 @@ component DevicePickerRow inherits Rectangle {
     }
 }
 
+// --- Toast banner -------------------------------------------------------
+//
+// Persistent message strip rendered between the toolbar and the tab
+// row when `severity > 0`. Used for unrecoverable / user-actionable
+// conditions that the auto-rotating status-text line at the bottom of
+// the toolbar can't carry — most importantly the unsupported-firmware
+// gate. Dismissible by the X on the right; an `error` toast survives
+// until the underlying condition clears, then the app clears it on the
+// caller's behalf.
+component ToastBanner inherits Rectangle {
+    in property <int> severity; // 1=info, 2=warn, 3=error
+    in property <string> message;
+    callback dismissed();
+
+    height: 36px;
+    background:
+        root.severity == 3 ? Palette.error-bg
+        : root.severity == 2 ? #4a3a1a
+        : Palette.bg-cell;
+    border-color:
+        root.severity == 3 ? Palette.error
+        : root.severity == 2 ? Palette.accent
+        : Palette.border;
+    border-width: 1px;
+    border-radius: 4px;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 10px;
+        Text {
+            text:
+                root.severity == 3 ? "⚠"
+                : root.severity == 2 ? "⚠"
+                : "ⓘ";
+            color:
+                root.severity == 3 ? Palette.error
+                : root.severity == 2 ? Palette.accent
+                : Palette.text-dim;
+            font-size: 14px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.message;
+            color: Palette.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 24px;
+            height: 24px;
+            y: (parent.height - self.height) / 2;
+            background: dismiss-ta.has-hover ? Palette.bg-cell-hover : transparent;
+            border-radius: 3px;
+            Text {
+                text: "✕";
+                color: Palette.text-dim;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            dismiss-ta := TouchArea {
+                clicked => { root.dismissed(); }
+            }
+        }
+    }
+}
+
+// --- About dialog -------------------------------------------------------
+component AboutDialog inherits Rectangle {
+    in property <string> app-version;
+    in property <string> build-rev;
+    in property <string> supported-fw;
+    callback closed();
+
+    background: Palette.bg-panel;
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 8px;
+    width: 480px;
+    height: 320px;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 8px;
+        Text {
+            text: "FreeJoyXConfigurator";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        Text {
+            text: "Version " + root.app-version + " (" + root.build-rev + ")";
+            color: Palette.text;
+            font-size: 12px;
+        }
+        Rectangle { height: 8px; }
+        Text {
+            text: "Native Rust + Slint configurator for FreeJoyX firmware.";
+            color: Palette.text;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: "Supports firmware mask group 0x" + root.supported-fw + ". For legacy upstream FreeJoy boards on the 0x17XX line, use the Qt configurator (FreeJoyConfiguratorQt).";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+        Rectangle { height: 8px; }
+        Text {
+            text: "Licensed GPLv3. Source: github.com/anpeaco/FreeJoyXConfigurator";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            alignment: end;
+            PillButton {
+                label: "Close";
+                clicked => { root.closed(); }
+            }
+        }
+    }
+}
+
 // --- Top toolbar --------------------------------------------------------
 component Toolbar inherits Rectangle {
     in property <string> status-text;
@@ -1354,6 +1483,8 @@ component Toolbar inherits Rectangle {
     callback load-clicked();
     callback refresh-devices();
     callback device-picked(string /* serial */);
+    callback about-clicked();
+    callback open-log-folder();
 
     background: Palette.bg-panel;
     border-color: Palette.border;
@@ -1444,12 +1575,76 @@ component Toolbar inherits Rectangle {
             enabled: root.can-write;
             clicked => { root.write-clicked(); }
         }
+        PillButton {
+            label: "Help ▾";
+            enabled: true;
+            clicked => {
+                help-popup.show();
+            }
+            help-popup := PopupWindow {
+                x: 0;
+                y: parent.height + 4px;
+                width: 200px;
+                close-policy: close-on-click-outside;
+                Rectangle {
+                    background: Palette.bg-panel;
+                    border-color: Palette.border;
+                    border-width: 1px;
+                    border-radius: 6px;
+                    VerticalLayout {
+                        padding: 6px;
+                        spacing: 4px;
+                        Rectangle {
+                            height: 28px;
+                            background: about-ta.has-hover ? Palette.bg-cell-hover : transparent;
+                            border-radius: 3px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                Text {
+                                    text: "About FreeJoyXConfigurator";
+                                    color: Palette.text;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            about-ta := TouchArea {
+                                clicked => {
+                                    root.about-clicked();
+                                    help-popup.close();
+                                }
+                            }
+                        }
+                        Rectangle {
+                            height: 28px;
+                            background: log-ta.has-hover ? Palette.bg-cell-hover : transparent;
+                            border-radius: 3px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                Text {
+                                    text: "Open Log Folder";
+                                    color: Palette.text;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            log-ta := TouchArea {
+                                clicked => {
+                                    root.open-log-folder();
+                                    help-popup.close();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
 // --- Main window --------------------------------------------------------
 export component AppWindow inherits Window {
     title: "FreeJoyX Configurator";
+    icon: @image-url("../assets/icon.svg");
     background: Palette.bg-window;
     preferred-width: 1024px;
     preferred-height: 700px;
@@ -1473,6 +1668,13 @@ export component AppWindow inherits Window {
     in property <[ShiftRegRow]> shift-registers: [];
     in property <[DeviceOption]> device-candidates: [];
     in property <AdvancedModel> advanced;
+
+    in property <int> toast-severity: 0; // 0 hidden, 1 info, 2 warn, 3 error
+    in property <string> toast-message: "";
+    in property <string> app-version: "";
+    in property <string> build-rev: "";
+    in property <string> supported-fw: "";
+    in-out property <bool> about-open: false;
 
     callback read-clicked();
     callback write-clicked();
@@ -1510,6 +1712,8 @@ export component AppWindow inherits Window {
     callback advanced-name-edited(string);
     callback advanced-vid-edited(string);
     callback advanced-pid-edited(string);
+    callback toast-dismissed();
+    callback open-log-folder();
 
     in-out property <int> active-tab: 0;
 
@@ -1531,6 +1735,14 @@ export component AppWindow inherits Window {
             load-clicked => { root.load-clicked(); }
             refresh-devices => { root.refresh-devices(); }
             device-picked(s) => { root.device-picked(s); }
+            about-clicked => { root.about-open = true; }
+            open-log-folder => { root.open-log-folder(); }
+        }
+
+        if root.toast-severity > 0: ToastBanner {
+            severity: root.toast-severity;
+            message: root.toast-message;
+            dismissed => { root.toast-dismissed(); }
         }
 
         // Tab strip
@@ -1639,6 +1851,19 @@ export component AppWindow inherits Window {
                 vid-edited(s) => { root.advanced-vid-edited(s); }
                 pid-edited(s) => { root.advanced-pid-edited(s); }
             }
+        }
+    }
+
+    if root.about-open: Rectangle {
+        background: #00000088;
+        TouchArea {
+            clicked => { root.about-open = false; }
+        }
+        AboutDialog {
+            app-version: root.app-version;
+            build-rev: root.build-rev;
+            supported-fw: root.supported-fw;
+            closed => { root.about-open = false; }
         }
     }
 }
