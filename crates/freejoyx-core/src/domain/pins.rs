@@ -285,6 +285,24 @@ impl PinFunctionFamily {
     pub fn to_u8(self) -> u8 {
         self as u8
     }
+
+    /// Short label suitable for a compact pin chip on the board view
+    /// (max ~5 chars). `NotUsed` returns an empty string so the chip
+    /// shows only the silkscreen label.
+    #[must_use]
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::NotUsed => "",
+            Self::Button => "Btn",
+            Self::Axis => "Axis",
+            Self::Encoder => "Enc",
+            Self::Bus => "Bus",
+            Self::Sensor => "Snr",
+            Self::ShiftReg => "SReg",
+            Self::Led => "LED",
+            Self::RgbLed => "RGB",
+        }
+    }
 }
 
 /// Boards the configurator knows pin layouts for. Other `board_id`

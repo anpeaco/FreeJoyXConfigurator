@@ -862,11 +862,13 @@ fn refresh_pin_model(model: &Rc<VecModel<PinRow>>, cfg: &DeviceConfig, board: Bo
             .find(|c| c.slot == slot)
             .map(|c| c.kind.short_label())
             .unwrap_or_default();
+        let family = function.family();
         model.push(PinRow {
             pin_name: SharedString::from(board.pin_name(slot)),
             function_label: SharedString::from(function.label()),
             function_index: i32::try_from(function_index).unwrap_or(0),
-            function_family: i32::from(function.family().to_u8()),
+            function_family: i32::from(family.to_u8()),
+            family_short: SharedString::from(family.short_label()),
             conflict_msg: SharedString::from(conflict_msg),
         });
     }

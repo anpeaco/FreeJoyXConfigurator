@@ -160,6 +160,9 @@ struct PinRow {
     /// 2=Axis, 3=Encoder, 4=Bus, 5=Sensor, 6=ShiftReg, 7=Led, 8=RgbLed.
     function-family: int,
     conflict-msg: string,
+    /// Short role abbreviation rendered on the board-view chip (e.g.
+    /// "Btn", "Axis", "Enc"). Empty for `NotUsed`.
+    family-short: string,
 }
 
 // Pick the Lucide SVG matching a `PinFunctionFamily` integer. Slint's
@@ -184,12 +187,18 @@ component PinRowView inherits Rectangle {
     in property <PinRow> entry;
     in property <[string]> function-labels;
     in property <int> slot;
+    in property <bool> selected: false;
     callback function-picked(int /* slot */, int /* new function index */);
+    callback row-clicked();
 
     height: 36px;
-    background: entry.conflict-msg != "" ? Palette.error-bg : Palette.bg-cell;
-    border-color: entry.conflict-msg != "" ? Palette.error : Palette.border;
-    border-width: 1px;
+    background: entry.conflict-msg != ""
+        ? Palette.error-bg
+        : (root.selected ? Palette.bg-warn : Palette.bg-cell);
+    border-color: entry.conflict-msg != ""
+        ? Palette.error
+        : (root.selected ? Palette.accent : Palette.border);
+    border-width: root.selected ? 2px : 1px;
     border-radius: 4px;
 
     HorizontalLayout {
@@ -280,10 +289,119 @@ component PinRowView inherits Rectangle {
     }
 }
 
+// --- Board-view pin chip -----------------------------------------------
+//
+// One pin chip on the schematic board view. Renders silkscreen label
+// + family icon + short role abbreviation. Clicking highlights the
+// pin's row in the list on the left.
+component PinChip inherits Rectangle {
+    in property <PinRow> entry;
+    in property <int> slot;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 28px;
+    background: ta.has-hover
+        ? Palette.bg-cell-hover
+        : (root.selected ? Palette.bg-warn : Palette.bg-cell);
+    border-color: root.entry.conflict-msg != ""
+        ? Palette.error
+        : (root.selected ? Palette.accent : Palette.border);
+    border-width: root.selected || root.entry.conflict-msg != "" ? 2px : 1px;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 4px;
+        Text {
+            text: root.entry.pin-name;
+            color: Palette.text;
+            font-size: 11px;
+            font-weight: 600;
+            width: 38px;
+            vertical-alignment: center;
+        }
+        PinFamilyIcon {
+            family: root.entry.function-family;
+            tint: root.entry.function-family == 0 ? Palette.text-dim : Palette.accent;
+            size: 12px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.entry.family-short;
+            color: root.entry.function-family == 0 ? Palette.text-dim : Palette.text;
+            font-size: 10px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Schematic two-column board view. Each side mirrors the silkscreen
+// layout of a BluePill / BlackPill header strip — pins arranged in
+// two vertical columns, top to bottom, USB end at the top. The
+// 15-pin split (left: slots 0..14, right: slots 15..29) is close
+// enough to the BluePill's PA-side / PB-side layout to give the user
+// a "which side of the board" mental model without committing to
+// pixel-perfect artwork.
+component PinBoardView inherits Rectangle {
+    in property <[PinRow]> pins;
+    in property <int> highlighted-slot;
+    callback chip-clicked(int /* slot */);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+        Text {
+            text: "Board view";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Click a pin to highlight its row. Red border = pin conflict.";
+            color: Palette.text-dim;
+            font-size: 10px;
+            wrap: word-wrap;
+        }
+        Flickable {
+            viewport-height: 15 * 32px;
+            VerticalLayout {
+                spacing: 2px;
+                for r in 15: HorizontalLayout {
+                    spacing: 6px;
+                    if r < root.pins.length: PinChip {
+                        entry: root.pins[r];
+                        slot: r;
+                        selected: root.highlighted-slot == r;
+                        horizontal-stretch: 1;
+                        clicked => { root.chip-clicked(r); }
+                    }
+                    if r + 15 < root.pins.length: PinChip {
+                        entry: root.pins[r + 15];
+                        slot: r + 15;
+                        selected: root.highlighted-slot == r + 15;
+                        horizontal-stretch: 1;
+                        clicked => { root.chip-clicked(r + 15); }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // --- Pins tab body ------------------------------------------------------
 component PinsTab inherits Rectangle {
     in property <[PinRow]> pins;
     in property <[string]> function-labels;
+    in-out property <int> highlighted-slot: -1;
     callback pin-changed(int /* slot */, int /* function index */);
 
     background: Palette.bg-panel;
@@ -299,22 +417,37 @@ component PinsTab inherits Rectangle {
             font-weight: 600;
         }
         Text {
-            text: "Each row maps a physical chip pin to a function. Tap the function cell to cycle through choices. Rows in red conflict with another assignment.";
+            text: "Left list maps each physical chip pin to a function — tap the function cell to cycle. Right is a schematic board view: click a chip to highlight the matching row. Pins in conflict (singleton roles claimed twice) get a red outline.";
             color: Palette.text-dim;
             font-size: 11px;
             wrap: word-wrap;
         }
 
-        Flickable {
-            viewport-height: pins.length * 38px;
-            VerticalLayout {
-                spacing: 2px;
-                for pin-data[i] in root.pins: PinRowView {
-                    entry: pin-data;
-                    slot: i;
-                    function-labels: root.function-labels;
-                    function-picked(slot, fn) => { root.pin-changed(slot, fn); }
+        HorizontalLayout {
+            spacing: 10px;
+            vertical-stretch: 1;
+            // Left half: existing list.
+            Flickable {
+                horizontal-stretch: 5;
+                viewport-height: pins.length * 38px;
+                VerticalLayout {
+                    spacing: 2px;
+                    for pin-data[i] in root.pins: PinRowView {
+                        entry: pin-data;
+                        slot: i;
+                        function-labels: root.function-labels;
+                        selected: root.highlighted-slot == i;
+                        function-picked(slot, fn) => { root.pin-changed(slot, fn); }
+                        row-clicked => { root.highlighted-slot = i; }
+                    }
                 }
+            }
+            // Right half: schematic board view.
+            PinBoardView {
+                horizontal-stretch: 4;
+                pins: root.pins;
+                highlighted-slot: root.highlighted-slot;
+                chip-clicked(slot) => { root.highlighted-slot = slot; }
             }
         }
     }
