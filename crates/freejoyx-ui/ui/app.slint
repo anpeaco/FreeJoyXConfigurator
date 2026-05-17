@@ -1,0 +1,434 @@
+// FreeJoyXConfigurator Slint shell — Slice 5.
+//
+// Visual style per Style.MD: dark cockpit panel (#2a2a32) on near-black
+// window, amber accent (#ffcc33), light-grey text, single 1 px borders.
+// One Pins tab is implemented; other tabs render a "coming in Slice 6+"
+// placeholder so the tab strip is visible.
+
+// --- Palette ------------------------------------------------------------
+global Palette {
+    out property <color> bg-window: #000000;
+    out property <color> bg-panel: #2a2a32;
+    out property <color> bg-cell: #1a1a1e;
+    out property <color> bg-cell-alt: #1e1e22;
+    out property <color> bg-cell-hover: #1f1f23;
+    out property <color> bg-pill: #1e1e22;
+    out property <color> bg-pill-hover: #2e2e34;
+    out property <color> border: #3a3a44;
+    out property <color> text: #c8c8d0;
+    out property <color> text-dim: #8a8a96;
+    out property <color> accent: #ffcc33;
+    out property <color> error: #d65a5a;
+    out property <color> error-bg: #553333;
+    out property <color> success: #6cb86c;
+}
+
+// --- Reusable controls --------------------------------------------------
+component PillButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 30px;
+    min-width: 110px;
+    background: ta.has-hover ? Palette.bg-pill-hover : Palette.bg-pill;
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 4px;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    HorizontalLayout {
+        alignment: center;
+        padding-left: 12px;
+        padding-right: 12px;
+        Text {
+            text: root.label;
+            color: Palette.text;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component StatusDot inherits Rectangle {
+    in property <bool> connected: false;
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    background: root.connected ? Palette.success : Palette.text-dim;
+}
+
+// --- Tab strip ----------------------------------------------------------
+component TabButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 36px;
+    min-width: 120px;
+    background: root.selected ? Palette.bg-panel : (ta.has-hover && root.enabled ? Palette.bg-cell-hover : Palette.bg-cell);
+    border-color: root.selected ? Palette.accent : Palette.border;
+    border-width: root.selected ? 2px : 1px;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    HorizontalLayout {
+        alignment: center;
+        padding-left: 16px;
+        padding-right: 16px;
+        Text {
+            text: root.label;
+            color: root.selected ? Palette.accent : Palette.text;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// --- One pin row --------------------------------------------------------
+//
+// pin-name is the silkscreen label ("PA0"), function-label is the
+// human-readable role name, function-index is the index into the
+// global PinFunction list (used for the dropdown round-trip without
+// inventing a Slint enum mirror), conflict-msg is non-empty when the
+// validator flagged this row.
+struct PinRow {
+    pin-name: string,
+    function-label: string,
+    function-index: int,
+    conflict-msg: string,
+}
+
+component PinRowView inherits Rectangle {
+    in property <PinRow> entry;
+    in property <[string]> function-labels;
+    in property <int> slot;
+    callback function-picked(int /* slot */, int /* new function index */);
+
+    height: 36px;
+    background: entry.conflict-msg != "" ? Palette.error-bg : Palette.bg-cell;
+    border-color: entry.conflict-msg != "" ? Palette.error : Palette.border;
+    border-width: 1px;
+    border-radius: 4px;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+
+        Text {
+            text: root.entry.pin-name;
+            color: Palette.text;
+            font-size: 13px;
+            width: 60px;
+            vertical-alignment: center;
+        }
+
+        // Function picker — Slint's ComboBox lives in std-widgets;
+        // re-import not needed since we use the global one if available.
+        // For Slint 1.13 we use a plain combo via a TouchArea + Popup.
+        // To keep this slice's surface area tight, we render the label
+        // and use a click to advance through functions; the maintainer
+        // can later swap in std-widgets ComboBox if desired.
+        Rectangle {
+            min-width: 240px;
+            height: 28px;
+            background: cycle-ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 3px;
+            vertical-stretch: 0;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                Text {
+                    text: root.entry.function-label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+
+            cycle-ta := TouchArea {
+                clicked => {
+                    // Advance to next function — quick demo
+                    // interaction without bringing in a full popup.
+                    // Slice 5+ polish replaces with proper combobox.
+                    root.function-picked(root.slot, mod(root.entry.function-index + 1, root.function-labels.length));
+                }
+            }
+        }
+
+        Rectangle {
+            // Conflict badge
+            visible: root.entry.conflict-msg != "";
+            height: 22px;
+            background: Palette.error;
+            border-radius: 3px;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                Text {
+                    text: root.entry.conflict-msg;
+                    color: #ffffff;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            // Spacer to push the row leftward
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// --- Pins tab body ------------------------------------------------------
+component PinsTab inherits Rectangle {
+    in property <[PinRow]> pins;
+    in property <[string]> function-labels;
+    callback pin-changed(int /* slot */, int /* function index */);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+
+        Text {
+            text: "Pins";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Each row maps a physical chip pin to a function. Tap the function cell to cycle through choices. Rows in red conflict with another assignment.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        Flickable {
+            viewport-height: pins.length * 38px;
+            VerticalLayout {
+                spacing: 2px;
+                for pin-data[i] in root.pins: PinRowView {
+                    entry: pin-data;
+                    slot: i;
+                    function-labels: root.function-labels;
+                    function-picked(slot, fn) => { root.pin-changed(slot, fn); }
+                }
+            }
+        }
+    }
+}
+
+// --- Placeholder tab body for not-yet-implemented surfaces --------------
+component PlaceholderTab inherits Rectangle {
+    in property <string> tab-name;
+    in property <string> due;
+
+    background: Palette.bg-panel;
+    VerticalLayout {
+        alignment: center;
+        Text {
+            text: root.tab-name;
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "Coming in " + root.due + ".";
+            color: Palette.text-dim;
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// --- Top toolbar --------------------------------------------------------
+component Toolbar inherits Rectangle {
+    in property <string> status-text;
+    in property <bool> connected;
+    in property <string> device-summary;
+    in property <bool> can-read;
+    in property <bool> can-write;
+    in property <bool> can-save;
+    callback read-clicked();
+    callback write-clicked();
+    callback save-clicked();
+    callback load-clicked();
+
+    background: Palette.bg-panel;
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 6px;
+    height: 56px;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 14px;
+        StatusDot {
+            connected: root.connected;
+            y: (parent.height - self.height) / 2;
+        }
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.status-text;
+                color: Palette.text;
+                font-size: 12px;
+            }
+            Text {
+                text: root.device-summary;
+                color: Palette.text-dim;
+                font-size: 11px;
+            }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        PillButton {
+            label: "Load File…";
+            enabled: true;
+            clicked => { root.load-clicked(); }
+        }
+        PillButton {
+            label: "Save File…";
+            enabled: root.can-save;
+            clicked => { root.save-clicked(); }
+        }
+        PillButton {
+            label: "Read Device";
+            enabled: root.can-read;
+            clicked => { root.read-clicked(); }
+        }
+        PillButton {
+            label: "Write Device";
+            enabled: root.can-write;
+            clicked => { root.write-clicked(); }
+        }
+    }
+}
+
+// --- Main window --------------------------------------------------------
+export component AppWindow inherits Window {
+    title: "FreeJoyX Configurator";
+    background: Palette.bg-window;
+    preferred-width: 1024px;
+    preferred-height: 700px;
+    min-width: 720px;
+    min-height: 480px;
+
+    in property <string> status-text: "starting…";
+    in property <bool> connected: false;
+    in property <string> device-summary: "no device";
+    in property <bool> can-read: false;
+    in property <bool> can-write: false;
+    in property <bool> can-save: false;
+    in property <[PinRow]> pins: [];
+    in property <[string]> function-labels: [];
+
+    callback read-clicked();
+    callback write-clicked();
+    callback save-clicked();
+    callback load-clicked();
+    callback pin-changed(int, int);
+
+    in-out property <int> active-tab: 0;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+
+        Toolbar {
+            status-text: root.status-text;
+            connected: root.connected;
+            device-summary: root.device-summary;
+            can-read: root.can-read;
+            can-write: root.can-write;
+            can-save: root.can-save;
+            read-clicked => { root.read-clicked(); }
+            write-clicked => { root.write-clicked(); }
+            save-clicked => { root.save-clicked(); }
+            load-clicked => { root.load-clicked(); }
+        }
+
+        // Tab strip
+        Rectangle {
+            height: 40px;
+            HorizontalLayout {
+                spacing: 4px;
+                TabButton {
+                    label: "Pins";
+                    selected: root.active-tab == 0;
+                    clicked => { root.active-tab = 0; }
+                }
+                TabButton {
+                    label: "Axes";
+                    enabled: false;
+                    selected: root.active-tab == 1;
+                }
+                TabButton {
+                    label: "Buttons + Logic";
+                    enabled: false;
+                    selected: root.active-tab == 2;
+                }
+                TabButton {
+                    label: "Shifts & Timers";
+                    enabled: false;
+                    selected: root.active-tab == 3;
+                }
+                TabButton {
+                    label: "Encoders";
+                    enabled: false;
+                    selected: root.active-tab == 4;
+                }
+                TabButton {
+                    label: "Shift Registers";
+                    enabled: false;
+                    selected: root.active-tab == 5;
+                }
+                TabButton {
+                    label: "Advanced";
+                    enabled: false;
+                    selected: root.active-tab == 6;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        // Tab body
+        Rectangle {
+            vertical-stretch: 1;
+            background: Palette.bg-panel;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 6px;
+
+            if root.active-tab == 0: PinsTab {
+                pins: root.pins;
+                function-labels: root.function-labels;
+                pin-changed(slot, fn) => { root.pin-changed(slot, fn); }
+            }
+            if root.active-tab == 1: PlaceholderTab { tab-name: "Axes"; due: "Slice 6"; }
+            if root.active-tab == 2: PlaceholderTab { tab-name: "Buttons + Logic"; due: "Slice 7"; }
+            if root.active-tab == 3: PlaceholderTab { tab-name: "Shifts & Timers"; due: "Slice 7"; }
+            if root.active-tab == 4: PlaceholderTab { tab-name: "Encoders"; due: "Slice 8"; }
+            if root.active-tab == 5: PlaceholderTab { tab-name: "Shift Registers"; due: "Slice 8"; }
+            if root.active-tab == 6: PlaceholderTab { tab-name: "Advanced Settings"; due: "Slice 9"; }
+        }
+    }
+}

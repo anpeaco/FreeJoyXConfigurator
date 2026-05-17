@@ -1,0 +1,21 @@
+[package]
+name = "freejoyx-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "FreeJoyXConfigurator binary — wires UI + device worker"
+default-run = "freejoyx-app"
+
+[[bin]]
+name = "freejoyx-app"
+path = "src/main.rs"
+
+[dependencies]
+freejoyx-core = { workspace = true }
+freejoyx-device = { workspace = true }
+freejoyx-ui = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

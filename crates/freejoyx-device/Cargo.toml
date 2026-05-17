@@ -1,0 +1,15 @@
+[package]
+name = "freejoyx-device"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "HID transport and device worker for FreeJoyX configurations"
+
+[dependencies]
+freejoyx-core = { workspace = true }
+hidapi = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,19 @@
+[package]
+name = "freejoyx-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Slint UI for FreeJoyX configurations"
+
+[dependencies]
+freejoyx-core = { workspace = true }
+freejoyx-device = { workspace = true }
+slint = { workspace = true }
+rfd = { workspace = true }
+tracing = { workspace = true }
+
+[build-dependencies]
+slint-build = "1.13"
