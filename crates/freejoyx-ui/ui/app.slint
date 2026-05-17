@@ -1084,27 +1084,258 @@ component ShiftRegsTab inherits Rectangle {
     }
 }
 
-// --- Placeholder tab body for not-yet-implemented surfaces --------------
-component PlaceholderTab inherits Rectangle {
-    in property <string> tab-name;
-    in property <string> due;
+// --- Advanced Settings tab --------------------------------------------
+//
+// Device-name (up to 26 bytes), VID, PID. Firmware version and board
+// id are rendered read-only — they come straight off the wire. The
+// device picker is in the toolbar; this tab is for fields that are
+// persisted on the connected board.
+struct AdvancedModel {
+    device-name: string,
+    vid-hex: string,
+    pid-hex: string,
+    firmware-version-hex: string,
+    board-id: int,
+    freejoyx-version: string,
+}
+
+component AdvancedTab inherits Rectangle {
+    in property <AdvancedModel> data;
+    callback name-edited(string);
+    callback vid-edited(string);
+    callback pid-edited(string);
 
     background: Palette.bg-panel;
+
     VerticalLayout {
-        alignment: center;
+        padding: 16px;
+        spacing: 10px;
+
         Text {
-            text: root.tab-name;
+            text: "Advanced Settings";
             color: Palette.accent;
             font-size: 18px;
             font-weight: 600;
-            horizontal-alignment: center;
         }
         Text {
-            text: "Coming in " + root.due + ".";
+            text: "Device identification persisted on the board. VID and PID accept hex (e.g. 0483). Firmware version and board id are read-only.";
             color: Palette.text-dim;
-            font-size: 13px;
-            horizontal-alignment: center;
+            font-size: 11px;
+            wrap: word-wrap;
         }
+
+        // Device name
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "Device name";
+                color: Palette.text;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: 280px;
+                height: 26px;
+                background: Palette.bg-cell-alt;
+                border-color: name-ti.has-focus ? Palette.accent : Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                name-ti := TextInput {
+                    text: root.data.device-name;
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    width: parent.width - 12px;
+                    x: 6px;
+                    edited => { root.name-edited(self.text); }
+                    accepted => { self.clear-focus(); }
+                }
+            }
+            Text {
+                text: "max 26 bytes";
+                color: Palette.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        // VID
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "USB VID";
+                color: Palette.text;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: 100px;
+                height: 26px;
+                background: Palette.bg-cell-alt;
+                border-color: vid-ti.has-focus ? Palette.accent : Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                vid-ti := TextInput {
+                    text: root.data.vid-hex;
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    width: parent.width - 12px;
+                    x: 6px;
+                    edited => { root.vid-edited(self.text); }
+                    accepted => { self.clear-focus(); }
+                }
+            }
+            Text {
+                text: "hex (0..ffff)";
+                color: Palette.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        // PID
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "USB PID";
+                color: Palette.text;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: 100px;
+                height: 26px;
+                background: Palette.bg-cell-alt;
+                border-color: pid-ti.has-focus ? Palette.accent : Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                pid-ti := TextInput {
+                    text: root.data.pid-hex;
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    width: parent.width - 12px;
+                    x: 6px;
+                    edited => { root.pid-edited(self.text); }
+                    accepted => { self.clear-focus(); }
+                }
+            }
+            Text {
+                text: "hex (0..ffff)";
+                color: Palette.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle { height: 8px; }
+        Text {
+            text: "Read-only";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "Firmware version";
+                color: Palette.text-dim;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.data.firmware-version-hex;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "Board id";
+                color: Palette.text-dim;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.data.board-id;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "FreeJoyX build";
+                color: Palette.text-dim;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.data.freejoyx-version;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
+// --- Device picker (toolbar popup row) ---------------------------------
+struct DeviceOption {
+    label: string,
+    serial: string,
+    is-current: bool,
+}
+
+component DevicePickerRow inherits Rectangle {
+    in property <DeviceOption> entry;
+    callback picked();
+
+    height: 30px;
+    background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell;
+    border-color: root.entry.is-current ? Palette.accent : Palette.border;
+    border-width: 1px;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: root.entry.is-current ? Palette.accent : transparent;
+            border-color: Palette.border;
+            border-width: 1px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.entry.label;
+            color: Palette.text;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+
+    ta := TouchArea {
+        clicked => { root.picked(); }
     }
 }
 
@@ -1116,10 +1347,13 @@ component Toolbar inherits Rectangle {
     in property <bool> can-read;
     in property <bool> can-write;
     in property <bool> can-save;
+    in property <[DeviceOption]> candidates;
     callback read-clicked();
     callback write-clicked();
     callback save-clicked();
     callback load-clicked();
+    callback refresh-devices();
+    callback device-picked(string /* serial */);
 
     background: Palette.bg-panel;
     border-color: Palette.border;
@@ -1146,6 +1380,47 @@ component Toolbar inherits Rectangle {
                 text: root.device-summary;
                 color: Palette.text-dim;
                 font-size: 11px;
+            }
+        }
+        PillButton {
+            label: "Devices ▾";
+            enabled: true;
+            clicked => {
+                root.refresh-devices();
+                picker-popup.show();
+            }
+            picker-popup := PopupWindow {
+                x: 0;
+                y: parent.height + 4px;
+                width: 320px;
+                close-policy: close-on-click-outside;
+                Rectangle {
+                    background: Palette.bg-panel;
+                    border-color: Palette.border;
+                    border-width: 1px;
+                    border-radius: 6px;
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 4px;
+                        Text {
+                            text: "Connected HID candidates";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                        }
+                        if root.candidates.length == 0: Text {
+                            text: "No FreeJoy / FreeJoyX devices found.";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                        }
+                        for opt in root.candidates: DevicePickerRow {
+                            entry: opt;
+                            picked => {
+                                root.device-picked(opt.serial);
+                                picker-popup.close();
+                            }
+                        }
+                    }
+                }
             }
         }
         Rectangle { horizontal-stretch: 1; }
@@ -1196,6 +1471,8 @@ export component AppWindow inherits Window {
     in property <[EncoderRow]> soft-encoders: [];
     in property <[FastEncoderRow]> fast-encoders: [];
     in property <[ShiftRegRow]> shift-registers: [];
+    in property <[DeviceOption]> device-candidates: [];
+    in property <AdvancedModel> advanced;
 
     callback read-clicked();
     callback write-clicked();
@@ -1228,6 +1505,11 @@ export component AppWindow inherits Window {
     callback fast-encoder-mode-cycled(int);
     callback shift-reg-type-cycled(int);
     callback shift-reg-count-edited(int, int);
+    callback refresh-devices();
+    callback device-picked(string);
+    callback advanced-name-edited(string);
+    callback advanced-vid-edited(string);
+    callback advanced-pid-edited(string);
 
     in-out property <int> active-tab: 0;
 
@@ -1242,10 +1524,13 @@ export component AppWindow inherits Window {
             can-read: root.can-read;
             can-write: root.can-write;
             can-save: root.can-save;
+            candidates: root.device-candidates;
             read-clicked => { root.read-clicked(); }
             write-clicked => { root.write-clicked(); }
             save-clicked => { root.save-clicked(); }
             load-clicked => { root.load-clicked(); }
+            refresh-devices => { root.refresh-devices(); }
+            device-picked(s) => { root.device-picked(s); }
         }
 
         // Tab strip
@@ -1285,8 +1570,8 @@ export component AppWindow inherits Window {
                 }
                 TabButton {
                     label: "Advanced";
-                    enabled: false;
                     selected: root.active-tab == 6;
+                    clicked => { root.active-tab = 6; }
                 }
                 Rectangle { horizontal-stretch: 1; }
             }
@@ -1348,7 +1633,12 @@ export component AppWindow inherits Window {
                 type-cycled(i) => { root.shift-reg-type-cycled(i); }
                 count-edited(i, v) => { root.shift-reg-count-edited(i, v); }
             }
-            if root.active-tab == 6: PlaceholderTab { tab-name: "Advanced Settings"; due: "Slice 9"; }
+            if root.active-tab == 6: AdvancedTab {
+                data: root.advanced;
+                name-edited(s) => { root.advanced-name-edited(s); }
+                vid-edited(s) => { root.advanced-vid-edited(s); }
+                pid-edited(s) => { root.advanced-pid-edited(s); }
+            }
         }
     }
 }

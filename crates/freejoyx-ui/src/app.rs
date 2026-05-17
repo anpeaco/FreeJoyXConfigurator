@@ -28,11 +28,12 @@ use freejoyx_core::wire::{DeviceConfig, ParamsReport, MAX_AXIS_NUM, USED_PINS_NU
 use freejoyx_device::{spawn_for_serial, Command, DeviceCandidate, DeviceEvent, DeviceHandle};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
+use crate::advanced as advanced_glue;
 use crate::buttons as buttons_glue;
 use crate::encoders as encoders_glue;
 use crate::{
-    AppWindow, AxisRow, ButtonRow, EncoderRow, FastEncoderRow, PinRow, ShiftRegRow, ShiftSlot,
-    TimerField,
+    AppWindow, AxisRow, ButtonRow, DeviceOption, EncoderRow, FastEncoderRow, PinRow, ShiftRegRow,
+    ShiftSlot, TimerField,
 };
 
 /// State the UI mutates outside of Slint's reactivity. Held inside a
@@ -60,6 +61,27 @@ impl State {
             status: "waiting for device…".to_string(),
             last_params: None,
         }
+    }
+
+    /// Forward a command to the device worker. Wrapper around
+    /// `DeviceHandle::send` so callbacks outside this module don't
+    /// need a direct reference to the worker handle.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`std::sync::mpsc::SendError`] from the worker
+    /// channel when the worker thread has joined or panicked.
+    pub(crate) fn handle_send(
+        &self,
+        cmd: Command,
+    ) -> Result<(), std::sync::mpsc::SendError<Command>> {
+        self.handle.send(cmd)
+    }
+
+    pub(crate) fn current_serial(&self) -> Option<&str> {
+        self.connected_device
+            .as_ref()
+            .and_then(|c| c.serial_number.as_deref())
     }
 }
 
@@ -101,6 +123,10 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     let shift_reg_model: Rc<VecModel<ShiftRegRow>> = Rc::new(VecModel::default());
     window.set_shift_registers(ModelRc::from(shift_reg_model.clone()));
 
+    let candidates_model: Rc<VecModel<DeviceOption>> = Rc::new(VecModel::default());
+    window.set_device_candidates(ModelRc::from(candidates_model.clone()));
+    window.set_advanced(advanced_glue::empty_advanced_model());
+
     // Populate function-label list once — it's static.
     let labels: Vec<SharedString> = PinFunction::all()
         .map(|f| SharedString::from(f.label()))
@@ -136,6 +162,14 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
         &fast_encoder_model,
         &shift_reg_model,
     );
+    advanced_glue::wire_callbacks(&window, &state, &candidates_model);
+
+    // Ask the worker for its candidate list up-front so the picker
+    // dropdown has something to show on first open without the user
+    // having to hit "refresh".
+    let _ = state
+        .borrow()
+        .handle_send(freejoyx_device::Command::Enumerate);
 
     // Poll the worker's event channel from a Slint timer. 100 ms is
     // brisk enough for connect/disconnect responsiveness without
@@ -152,6 +186,7 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
         let soft_encoder_model_for_timer = soft_encoder_model.clone();
         let fast_encoder_model_for_timer = fast_encoder_model.clone();
         let shift_reg_model_for_timer = shift_reg_model.clone();
+        let candidates_model_for_timer = candidates_model.clone();
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
@@ -169,6 +204,7 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
                         soft_encoder_model: &soft_encoder_model_for_timer,
                         fast_encoder_model: &fast_encoder_model_for_timer,
                         shift_reg_model: &shift_reg_model_for_timer,
+                        candidates_model: &candidates_model_for_timer,
                     },
                     &rx,
                 );
@@ -192,6 +228,7 @@ struct EventSinks<'a> {
     soft_encoder_model: &'a Rc<VecModel<EncoderRow>>,
     fast_encoder_model: &'a Rc<VecModel<FastEncoderRow>>,
     shift_reg_model: &'a Rc<VecModel<ShiftRegRow>>,
+    candidates_model: &'a Rc<VecModel<DeviceOption>>,
 }
 
 /// Same shape as [`EventSinks`] but for the load-file callback. Lets
@@ -209,6 +246,7 @@ struct LoadSinks<'a> {
     shift_reg_model: &'a Rc<VecModel<ShiftRegRow>>,
 }
 
+#[allow(clippy::too_many_lines)]
 fn pump_events(
     state: &Rc<RefCell<State>>,
     window: &AppWindow,
@@ -223,6 +261,7 @@ fn pump_events(
     let soft_encoder_model = sinks.soft_encoder_model;
     let fast_encoder_model = sinks.fast_encoder_model;
     let shift_reg_model = sinks.shift_reg_model;
+    let candidates_model = sinks.candidates_model;
     while let Ok(evt) = rx.try_recv() {
         match evt {
             DeviceEvent::Connected(c) => {
@@ -234,6 +273,10 @@ fn pump_events(
                 window.set_status_text(SharedString::from(s.status.clone()));
                 window.set_can_read(true);
                 window.set_can_write(false);
+                // Ask the worker for an up-to-date candidate list so
+                // the picker's accent dot moves to the newly-current
+                // device.
+                let _ = s.handle_send(Command::Enumerate);
             }
             DeviceEvent::Disconnected => {
                 let mut s = state.borrow_mut();
@@ -246,10 +289,15 @@ fn pump_events(
                 window.set_can_write(false);
             }
             DeviceEvent::ParamsTick(p) => {
-                let cfg_opt = {
+                let (cfg_opt, version_triple) = {
                     let mut s = state.borrow_mut();
+                    let triple = (
+                        p.freejoyx_version_major,
+                        p.freejoyx_version_minor,
+                        p.freejoyx_version_patch,
+                    );
                     s.last_params = Some(p);
-                    s.last_config.clone()
+                    (s.last_config.clone(), triple)
                 };
                 if let Some(cfg) = cfg_opt {
                     let params_snapshot = state.borrow().last_params.clone();
@@ -262,6 +310,13 @@ fn pump_events(
                         &cfg,
                         params_snapshot.as_ref(),
                     );
+                    let merged = advanced_glue::merge_params_into_advanced(
+                        &window.get_advanced(),
+                        version_triple.0,
+                        version_triple.1,
+                        version_triple.2,
+                    );
+                    window.set_advanced(merged);
                 }
             }
             DeviceEvent::ConfigReceived(cfg) => {
@@ -292,6 +347,12 @@ fn pump_events(
                 encoders_glue::refresh_soft_encoder_model(soft_encoder_model, &cfg);
                 encoders_glue::refresh_fast_encoder_model(fast_encoder_model, &cfg);
                 encoders_glue::refresh_shift_reg_model(shift_reg_model, &cfg);
+                // Preserve the live freejoyx-version line that
+                // ParamsTick has been filling in.
+                let prior = window.get_advanced();
+                let mut next = advanced_glue::build_advanced_model(&cfg);
+                next.freejoyx_version = prior.freejoyx_version;
+                window.set_advanced(next);
             }
             DeviceEvent::ConfigSent => {
                 let mut s = state.borrow_mut();
@@ -302,6 +363,14 @@ fn pump_events(
                 let mut s = state.borrow_mut();
                 s.status = format!("config error: {msg}");
                 window.set_status_text(SharedString::from(s.status.clone()));
+            }
+            DeviceEvent::Candidates(list) => {
+                let current = state.borrow().current_serial().map(str::to_string);
+                advanced_glue::refresh_candidates_model(
+                    candidates_model,
+                    &list,
+                    current.as_deref(),
+                );
             }
             DeviceEvent::Error(msg) => {
                 let mut s = state.borrow_mut();
@@ -457,6 +526,10 @@ fn wire_load_callback(window: &AppWindow, state: &Rc<RefCell<State>>, sinks: &Lo
                 encoders_glue::refresh_fast_encoder_model(&fast_encoder_model, &cfg_for_model);
                 encoders_glue::refresh_shift_reg_model(&shift_reg_model, &cfg_for_model);
                 if let Some(w) = weak.upgrade() {
+                    let prior = w.get_advanced();
+                    let mut next = advanced_glue::build_advanced_model(&cfg_for_model);
+                    next.freejoyx_version = prior.freejoyx_version;
+                    w.set_advanced(next);
                     w.set_can_save(true);
                     let connected = w.get_connected();
                     w.set_can_write(connected);
