@@ -31,5 +31,7 @@ pub use axes::AxisFilter;
 pub use buttons::{physical_assignment_blocked, ButtonType, CoexistenceCheck};
 pub use encoders::EncoderMode;
 pub use logic::{validate_logic_buttons, LogicError, LogicOp, BUTTON_TYPE_LOGIC};
-pub use pins::{validate_pins, Board, PinConflict, PinConflictKind, PinFunction};
+pub use pins::{
+    validate_pins, Board, PinConflict, PinConflictKind, PinFunction, PinFunctionFamily,
+};
 pub use shift_registers::ShiftRegType;

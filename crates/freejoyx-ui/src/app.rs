@@ -807,6 +807,7 @@ fn refresh_pin_model(model: &Rc<VecModel<PinRow>>, cfg: &DeviceConfig, board: Bo
             pin_name: SharedString::from(board.pin_name(slot)),
             function_label: SharedString::from(function.label()),
             function_index: i32::try_from(function_index).unwrap_or(0),
+            function_family: i32::from(function.family().to_u8()),
             conflict_msg: SharedString::from(conflict_msg),
         });
     }

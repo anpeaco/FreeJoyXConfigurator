@@ -197,6 +197,44 @@ impl PinFunction {
         ALL.into_iter()
     }
 
+    /// Visual family the function belongs to. The UI uses this to pick
+    /// a Lucide icon next to the function label so an at-a-glance scan
+    /// of the pin list shows the functional zoning. Stable integers
+    /// across the wire so the Slint side can drive an `@image-url`
+    /// chain off them.
+    #[must_use]
+    pub fn family(self) -> PinFunctionFamily {
+        use PinFunctionFamily::{Axis, Bus, Button, Encoder, Led, NotUsed, RgbLed, Sensor, ShiftReg};
+        match self {
+            Self::NotUsed => NotUsed,
+            Self::ButtonGnd
+            | Self::ButtonVcc
+            | Self::ButtonRow
+            | Self::ButtonColumn => Button,
+            Self::AxisAnalog => Axis,
+            Self::FastEncoder => Encoder,
+            Self::SpiSck
+            | Self::SpiMosi
+            | Self::SpiMiso
+            | Self::I2cScl
+            | Self::I2cSda
+            | Self::UartTx => Bus,
+            Self::Tle5011Gen
+            | Self::Tle5011Cs
+            | Self::Tle5012Cs
+            | Self::Mcp3201Cs
+            | Self::Mcp3202Cs
+            | Self::Mcp3204Cs
+            | Self::Mcp3208Cs
+            | Self::Mlx90393Cs
+            | Self::As5048aCs
+            | Self::Mlx90363Cs => Sensor,
+            Self::ShiftRegLatch | Self::ShiftRegData | Self::ShiftRegClk => ShiftReg,
+            Self::LedPwm | Self::LedSingle | Self::LedRow | Self::LedColumn => Led,
+            Self::LedRgbWs2812b | Self::LedRgbPl9823 => RgbLed,
+        }
+    }
+
     /// `true` if the firmware allows only one pin in the array to
     /// carry this role. Validation flags any pin row that picks a
     /// singleton already taken by another row.
@@ -218,6 +256,34 @@ impl PinFunction {
 impl fmt::Display for PinFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.label())
+    }
+}
+
+/// Visual grouping the UI uses to pick a per-function icon. Integer
+/// values are stable so Slint's `@image-url` chain can switch off the
+/// wire byte directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PinFunctionFamily {
+    NotUsed = 0,
+    Button = 1,
+    Axis = 2,
+    Encoder = 3,
+    /// SPI / I2C / UART signal pins.
+    Bus = 4,
+    /// External-sensor CS / GEN pins (TLE, MLX, MCP, AS5048).
+    Sensor = 5,
+    ShiftReg = 6,
+    /// Single / PWM / row / column LED pins.
+    Led = 7,
+    /// Addressable RGB LED chain pins (WS2812B / PL9823).
+    RgbLed = 8,
+}
+
+impl PinFunctionFamily {
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        self as u8
     }
 }
 
@@ -430,6 +496,35 @@ mod tests {
         assert_eq!(Board::Bluepill.pin_name(22), "PB11");
         assert_eq!(Board::Bluepill.pin_name(27), "PC13");
         assert_eq!(Board::Bluepill.pin_name(29), "PC15");
+    }
+
+    #[test]
+    fn every_function_has_a_family() {
+        // Exhaustive — `family()` matches on all 32 variants, so a new
+        // function added without a family arm fails to compile.
+        for f in PinFunction::all() {
+            let _fam = f.family();
+        }
+    }
+
+    #[test]
+    fn family_groups_expected_functions() {
+        use PinFunctionFamily::*;
+        assert_eq!(PinFunction::NotUsed.family(), NotUsed);
+        assert_eq!(PinFunction::ButtonGnd.family(), Button);
+        assert_eq!(PinFunction::ButtonColumn.family(), Button);
+        assert_eq!(PinFunction::AxisAnalog.family(), Axis);
+        assert_eq!(PinFunction::FastEncoder.family(), Encoder);
+        assert_eq!(PinFunction::SpiSck.family(), Bus);
+        assert_eq!(PinFunction::I2cScl.family(), Bus);
+        assert_eq!(PinFunction::UartTx.family(), Bus);
+        assert_eq!(PinFunction::Tle5011Gen.family(), Sensor);
+        assert_eq!(PinFunction::Mlx90393Cs.family(), Sensor);
+        assert_eq!(PinFunction::ShiftRegClk.family(), ShiftReg);
+        assert_eq!(PinFunction::LedSingle.family(), Led);
+        assert_eq!(PinFunction::LedPwm.family(), Led);
+        assert_eq!(PinFunction::LedRgbWs2812b.family(), RgbLed);
+        assert_eq!(PinFunction::LedRgbPl9823.family(), RgbLed);
     }
 
     #[test]

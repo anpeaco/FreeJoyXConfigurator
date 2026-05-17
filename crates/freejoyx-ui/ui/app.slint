@@ -155,7 +155,29 @@ struct PinRow {
     pin-name: string,
     function-label: string,
     function-index: int,
+    /// Visual family code from `PinFunctionFamily::to_u8` — drives the
+    /// leading icon on the function cell. Values: 0=NotUsed, 1=Button,
+    /// 2=Axis, 3=Encoder, 4=Bus, 5=Sensor, 6=ShiftReg, 7=Led, 8=RgbLed.
+    function-family: int,
     conflict-msg: string,
+}
+
+// Pick the Lucide SVG matching a `PinFunctionFamily` integer. Slint's
+// `@image-url` is a compile-time literal so the dispatch has to be a
+// chain — values match `PinFunctionFamily::to_u8` on the Rust side.
+component PinFamilyIcon inherits LucideIcon {
+    in property <int> family: 0;
+    size: 14px;
+    source:
+        family == 1 ? @image-url("../assets/icons/square-mouse-pointer.svg") :
+        family == 2 ? @image-url("../assets/icons/sliders-horizontal.svg") :
+        family == 3 ? @image-url("../assets/icons/rotate-cw.svg") :
+        family == 4 ? @image-url("../assets/icons/cable.svg") :
+        family == 5 ? @image-url("../assets/icons/radar.svg") :
+        family == 6 ? @image-url("../assets/icons/layers.svg") :
+        family == 7 ? @image-url("../assets/icons/lightbulb.svg") :
+        family == 8 ? @image-url("../assets/icons/palette.svg") :
+        @image-url("../assets/icons/circle-dashed.svg");
 }
 
 component PinRowView inherits Rectangle {
@@ -199,8 +221,14 @@ component PinRowView inherits Rectangle {
             vertical-stretch: 0;
 
             HorizontalLayout {
-                padding-left: 10px;
+                padding-left: 8px;
                 padding-right: 10px;
+                spacing: 6px;
+                PinFamilyIcon {
+                    family: root.entry.function-family;
+                    tint: root.entry.function-family == 0 ? Palette.text-dim : Palette.accent;
+                    y: (parent.height - self.height) / 2;
+                }
                 Text {
                     text: root.entry.function-label;
                     color: Palette.text;
