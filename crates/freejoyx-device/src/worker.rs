@@ -61,6 +61,15 @@ pub enum Command {
     /// [`DeviceEvent::ConfigSent`] on success or
     /// [`DeviceEvent::ConfigError`] on failure.
     WriteConfig(Box<DeviceConfig>),
+    /// Re-enumerate HID devices and emit the candidate list via
+    /// [`DeviceEvent::Candidates`]. Used by the toolbar device picker
+    /// to refresh its dropdown.
+    Enumerate,
+    /// Switch the worker's serial filter. The currently-open device
+    /// (if any) is dropped and discovery restarts; the first candidate
+    /// matching `serial` is opened next. `None` falls back to first-
+    /// enumerated.
+    Reopen { serial: Option<String> },
 }
 
 /// Events the worker pushes to the UI. The receiver side is consumed
@@ -85,6 +94,9 @@ pub enum DeviceEvent {
     /// A config read or write failed. Carries a human-readable detail
     /// for surfacing in the UI.
     ConfigError(String),
+    /// Latest HID candidate list, emitted in response to
+    /// [`Command::Enumerate`]. Drives the toolbar device picker.
+    Candidates(Vec<DeviceCandidate>),
     /// Recoverable transport failure surfaced for diagnostics. The
     /// worker keeps running after these.
     Error(String),
@@ -185,24 +197,40 @@ pub fn spawn_for_serial(serial: Option<String>) -> (DeviceHandle, mpsc::Receiver
 
 /// Worker thread main loop. Returns when [`Command::Shutdown`] is
 /// observed or the event receiver is dropped. `serial_filter` (if set)
-/// restricts the worker to devices with that HID serial number.
+/// restricts the worker to devices with that HID serial number. The
+/// filter is mutable across the lifetime of the worker so
+/// [`Command::Reopen`] can switch devices without a restart.
 fn run_worker(
     cmd_rx: &mpsc::Receiver<Command>,
     evt_tx: &mpsc::Sender<DeviceEvent>,
     serial_filter: Option<&str>,
 ) {
+    let mut serial_filter: Option<String> = serial_filter.map(str::to_owned);
     info!("device worker started (serial filter: {:?})", serial_filter);
     loop {
-        if poll_shutdown(cmd_rx, evt_tx) {
-            info!("device worker shutting down");
-            return;
+        match poll_idle_commands(cmd_rx, evt_tx, serial_filter.as_deref()) {
+            IdleAction::Continue => {}
+            IdleAction::Shutdown => {
+                info!("device worker shutting down");
+                return;
+            }
+            IdleAction::Reopen(new_filter) => {
+                info!("reopen requested while idle; new filter: {new_filter:?}");
+                serial_filter = new_filter;
+                continue;
+            }
         }
 
-        let Some(candidate) = find_first_candidate(serial_filter) else {
+        let Some(candidate) = find_first_candidate(serial_filter.as_deref()) else {
             // No device — wait and re-poll. Sleep in small slices so
             // shutdown stays responsive.
-            if sleep_with_shutdown(cmd_rx, evt_tx, DISCOVERY_POLL) {
-                return;
+            match sleep_with_shutdown(cmd_rx, evt_tx, DISCOVERY_POLL, serial_filter.as_deref()) {
+                IdleAction::Continue => {}
+                IdleAction::Shutdown => return,
+                IdleAction::Reopen(new_filter) => {
+                    info!("reopen during sleep; new filter: {new_filter:?}");
+                    serial_filter = new_filter;
+                }
             }
             continue;
         };
@@ -211,8 +239,11 @@ fn run_worker(
             Ok(d) => d,
             Err(e) => {
                 emit_error(evt_tx, format!("open {} failed: {e}", candidate.path));
-                if sleep_with_shutdown(cmd_rx, evt_tx, DISCOVERY_POLL) {
-                    return;
+                match sleep_with_shutdown(cmd_rx, evt_tx, DISCOVERY_POLL, serial_filter.as_deref())
+                {
+                    IdleAction::Continue => {}
+                    IdleAction::Shutdown => return,
+                    IdleAction::Reopen(new_filter) => serial_filter = new_filter,
                 }
                 continue;
             }
@@ -241,6 +272,11 @@ fn run_worker(
                 let _ = evt_tx.send(DeviceEvent::Disconnected);
                 info!("disconnected; resuming discovery");
             }
+            PumpOutcome::ReopenRequested(new_filter) => {
+                let _ = evt_tx.send(DeviceEvent::Disconnected);
+                serial_filter = new_filter;
+                info!("reopen requested; new filter: {serial_filter:?}");
+            }
         }
     }
 }
@@ -251,6 +287,20 @@ enum PumpOutcome {
     Shutdown,
     /// The device went away (read error / unplug); resume discovery.
     Disconnected,
+    /// The UI asked to switch devices. The current device is dropped,
+    /// the worker swaps in the new serial filter, and discovery
+    /// restarts.
+    ReopenRequested(Option<String>),
+}
+
+/// What an idle-state command poll just observed.
+enum IdleAction {
+    /// Keep iterating the outer discovery loop.
+    Continue,
+    /// `Shutdown` arrived — exit the worker entirely.
+    Shutdown,
+    /// Caller should swap in this serial filter and restart discovery.
+    Reopen(Option<String>),
 }
 
 /// Read loop while a device is open. Interleaves params reads with
@@ -267,6 +317,9 @@ fn pump_until_disconnect(
             CommandLoopResult::Continue => {}
             CommandLoopResult::Shutdown => return PumpOutcome::Shutdown,
             CommandLoopResult::Disconnect => return PumpOutcome::Disconnected,
+            CommandLoopResult::Reopen(new_filter) => {
+                return PumpOutcome::ReopenRequested(new_filter)
+            }
         }
         if std::time::Instant::now() >= next_refresh {
             if let Err(e) = device.request_params() {
@@ -302,6 +355,9 @@ enum CommandLoopResult {
     /// A config command failed because the device dropped — fall back
     /// to discovery.
     Disconnect,
+    /// `Reopen` arrived; drop the current device and swap in this
+    /// serial filter.
+    Reopen(Option<String>),
 }
 
 /// Drain all pending commands and run them inline. Config exchanges
@@ -348,6 +404,12 @@ fn dispatch_pending_commands(
                     }
                 }
             },
+            Ok(Command::Enumerate) => {
+                let _ = evt_tx.send(DeviceEvent::Candidates(enumerate_or_empty()));
+            }
+            Ok(Command::Reopen { serial }) => {
+                return CommandLoopResult::Reopen(serial);
+            }
             Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
                 return CommandLoopResult::Continue;
             }
@@ -355,51 +417,88 @@ fn dispatch_pending_commands(
     }
 }
 
-/// Non-blocking check for [`Command::Shutdown`] on the command channel.
-/// Used in the discovery loop where there's no device to dispatch
-/// config commands against; non-shutdown commands are dropped with a
-/// [`DeviceEvent::ConfigError`] so the UI sees its request didn't
-/// land instead of silently waiting forever. Returns `true` if
-/// shutdown was observed.
-fn poll_shutdown(cmd_rx: &mpsc::Receiver<Command>, evt_tx: &mpsc::Sender<DeviceEvent>) -> bool {
+/// Convenience wrapper around [`enumerate`] that returns an empty
+/// `Vec` on transport error rather than propagating. Used by
+/// `Command::Enumerate` so the UI always gets a list back, even if
+/// it's empty.
+fn enumerate_or_empty() -> Vec<DeviceCandidate> {
+    enumerate().unwrap_or_else(|e| {
+        debug!("enumerate for picker failed: {e}");
+        Vec::new()
+    })
+}
+
+/// Non-blocking command drain for the idle (no-device) phase.
+/// [`Command::Enumerate`] is serviced inline (always — it's the
+/// picker's primary mechanism for refreshing its dropdown). Config
+/// commands have nowhere to go and are dropped with a friendly
+/// [`DeviceEvent::ConfigError`]. Returns the appropriate
+/// [`IdleAction`] for the caller to act on.
+fn poll_idle_commands(
+    cmd_rx: &mpsc::Receiver<Command>,
+    evt_tx: &mpsc::Sender<DeviceEvent>,
+    current_filter: Option<&str>,
+) -> IdleAction {
     loop {
         match cmd_rx.try_recv() {
-            Ok(Command::Shutdown) => return true,
+            Ok(Command::Shutdown) => return IdleAction::Shutdown,
             Ok(Command::ReadConfig | Command::WriteConfig(_)) => {
                 let _ = evt_tx.send(DeviceEvent::ConfigError(
                     "no device connected — command dropped".to_string(),
                 ));
             }
-            Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => return false,
+            Ok(Command::Enumerate) => {
+                let _ = evt_tx.send(DeviceEvent::Candidates(enumerate_or_empty()));
+            }
+            Ok(Command::Reopen { serial }) => {
+                if serial.as_deref() == current_filter {
+                    debug!("reopen to same filter; ignoring");
+                } else {
+                    return IdleAction::Reopen(serial);
+                }
+            }
+            Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
+                return IdleAction::Continue;
+            }
         }
     }
 }
 
-/// Sleep for at most `total`, but wake immediately if a
-/// [`Command::Shutdown`] arrives. Non-shutdown commands that arrive
-/// while no device is open are dropped silently — the discovery phase
-/// has no way to service them.
+/// Sleep for at most `total`, but wake immediately on any actionable
+/// command. Behaves the same way as [`poll_idle_commands`] for
+/// non-timeout returns.
 fn sleep_with_shutdown(
     cmd_rx: &mpsc::Receiver<Command>,
     evt_tx: &mpsc::Sender<DeviceEvent>,
     total: Duration,
-) -> bool {
+    current_filter: Option<&str>,
+) -> IdleAction {
     let deadline = std::time::Instant::now() + total;
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
-            return false;
+            return IdleAction::Continue;
         }
         let slice = remaining.min(Duration::from_millis(50));
         match cmd_rx.recv_timeout(slice) {
-            Ok(Command::Shutdown) => return true,
+            Ok(Command::Shutdown) => return IdleAction::Shutdown,
             Ok(Command::ReadConfig | Command::WriteConfig(_)) => {
                 let _ = evt_tx.send(DeviceEvent::ConfigError(
                     "no device connected — command dropped".to_string(),
                 ));
             }
+            Ok(Command::Enumerate) => {
+                let _ = evt_tx.send(DeviceEvent::Candidates(enumerate_or_empty()));
+            }
+            Ok(Command::Reopen { serial }) => {
+                if serial.as_deref() == current_filter {
+                    debug!("reopen to same filter; ignoring");
+                } else {
+                    return IdleAction::Reopen(serial);
+                }
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return IdleAction::Continue,
         }
     }
 }

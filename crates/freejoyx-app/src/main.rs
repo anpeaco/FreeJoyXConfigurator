@@ -145,6 +145,10 @@ fn run_watch(serial: Option<String>) -> ExitCode {
                 eprintln!("note: unexpected config event during watch");
             }
             DeviceEvent::ConfigError(msg) => eprintln!("config error: {msg}"),
+            DeviceEvent::Candidates(_) => {
+                // `watch` doesn't issue Enumerate; ignore if one
+                // sneaks in from another source.
+            }
             DeviceEvent::Error(msg) => eprintln!("error: {msg}"),
         }
     }
