@@ -3,6 +3,130 @@
 Continues the overnight session that started 2026-05-16. The previous
 entries (bootstrap + Slice 0 + Slice 0.5(a)) are below this header.
 
+## Update 2026-05-17 — Slice 8 (Encoders + Shift Registers) DONE
+
+Two new tabs, two new domain modules, one new UI-glue module. Picks up
+after Slice 7. Lands in three sub-steps (8a–8c).
+
+### 8a — domain::encoders + domain::shift_registers
+
+Two thin enum modules:
+
+- **`EncoderMode`** mirrors `encoder_t` (1x / 2x / 4x) for both
+  `encoders[16]` soft slots and `fast_encoders[2].mode`. `from_u8`
+  returns `None` for values outside 0..=2 so the wire codec's
+  raw-byte storage keeps round-tripping any future addition.
+- **`ShiftRegType`** mirrors `shift_reg_config_type_t` (HC165 /
+  CD4021 × pull-down / pull-up). Same `from_u8` / `to_u8` /
+  `label()` / `all()` shape as `EncoderMode` and `AxisFilter`.
+
+Latch / data / clock pin assignments live in `pins[30]` as the
+`ShiftRegLatch` / `ShiftRegData` / `ShiftRegClk` `PinFunction`s
+(handled by the Pins tab from Slice 5); they're intentionally **not**
+fields on `shift_reg_config_t`, so the Shift Registers tab only
+covers `type` + `button_cnt`.
+
++5 tests (2 encoder round-trip + 3 shift-reg).
+
+### 8b — Slint UI: EncodersTab + ShiftRegsTab
+
+- **`EncodersTab`** — split into two sections.
+  - **Fast (hardware) encoders**: 2 rows, each with an `Enabled`
+    `CheckCell`, a mode `CycleCell` (1x/2x/4x), and an inline hint
+    documenting the silicon-locked pin pair (PA8/PA9 = Fast 1,
+    PB6/PB7 = Fast 2). The hint is there because the controls
+    themselves don't show you why these encoders can't move.
+  - **Soft (software) encoders**: 16 rows in a `Flickable`, each just
+    `Encoder N` + mode `CycleCell`. The actual encoder→button wiring
+    happens on the Buttons tab (set the two physical slots to
+    `ENCODER_INPUT_A` / `ENCODER_INPUT_B`), so this tab is just the
+    decode-rate picker.
+
+- **`ShiftRegsTab`** — 4 rows, each with a type `CycleCell` (140 px
+  wide for "CD4021 pull-down") and a button-count `NumberCell`.
+  Inline note points users at the Pins tab for the latch/data/clock
+  assignments.
+
+Three new structs (`EncoderRow`, `FastEncoderRow`, `ShiftRegRow`) and
+five new callbacks: `soft-encoder-mode-cycled`,
+`fast-encoder-enabled-toggled`, `fast-encoder-mode-cycled`,
+`shift-reg-type-cycled`, `shift-reg-count-edited`. Both tab buttons
+are now enabled.
+
+### 8c — app glue: new crate::encoders module
+
+Same shape as Slice 7's `crate::buttons` glue: `refresh_*_model`
+helpers (wholesale or per-row), a `wire_callbacks` entry point that
+threads each edit through `mark_dirty` so the toolbar surfaces the
+unsaved state.
+
+`app.rs`:
+- Three new model `Rc<VecModel<…>>` allocations, set onto `AppWindow`
+  via the generated `set_soft_encoders` / `set_fast_encoders` /
+  `set_shift_registers` setters.
+- `EventSinks` / new `LoadSinks` bundles grew three fields each —
+  introducing `LoadSinks` finally takes the eight-model load
+  callback out of `#[allow(clippy::too_many_arguments)]` territory.
+- `ConfigReceived` and the file-load callback now refresh all 8
+  models in lockstep; a freshly loaded file is fully visible across
+  every tab without a Read Device round-trip.
+
+### 8d — verification
+
+Five-command discipline holds:
+
+- `cargo fmt --all --check` ✓
+- `cargo clippy --workspace --all-targets -- -D warnings` ✓ (clean
+  on the first run, no rounds of doc-markdown / cast-truncation
+  fixes this time — the encoder/SR glue stuck to the patterns
+  Slice 7 worked out)
+- `cargo test --workspace` ✓ — **78 tests pass** (was 73; +5 from
+  the new domain modules)
+- `cargo build --workspace --release` ✓
+- `cargo run -p freejoyx-app -- list` ✓ — all 6 boards visible
+
+### Notes for downstream slices
+
+- **Live encoder count overlay not surfaced.** `params_report_t`
+  doesn't carry encoder counts (the firmware emits them via the
+  separate button bitmaps when encoder pulses fire button slots),
+  so the Encoders tab has no live overlay — the maintainer will
+  see encoder motion as button events on the Buttons tab. A
+  dedicated encoder-rotation display would need either a new
+  firmware report or a derived signal in the configurator; not
+  worth it for v0.1.
+- **No board-aware pin-conflict rules yet.** PA8 PWM vs PA10 RGB on
+  F103, and PB6/PB7 FAST_ENCODER vs TLE5011_GEN, are still
+  unenforced. Slice 5's notes called them out as deferred to
+  whichever slice surfaces them; the Encoders tab now lets the
+  user toggle Fast 2 mode without warning that PB6/PB7 might be
+  claimed by the TLE5011 clock. Worth a Slice 10 polish item once
+  the v0.1 surface is otherwise complete.
+- **The shift-register row doesn't show which pins are wired.**
+  `pins[30]` knows; the SR tab could pull
+  `ShiftRegLatch` / `Data` / `Clk` slots and render them as a
+  read-only hint. Skipped to keep this slice tight; trivial follow-up
+  if the maintainer asks.
+- **Button-count input has no chain-of-three sanity check.** HC165 /
+  CD4021 are 8-bit shift registers; meaningful button_cnt values
+  are multiples of 8. The Qt configurator enforces this via spinbox
+  step; we accept any 0..=255 input and let the firmware decide.
+  Polish item.
+- **Bench verification of Fast 2 (PB6/PB7) still pending.** Step 1
+  of the firmware roadmap landed it; toggling it from this
+  configurator across a Read → Edit → Write → Read trip is the
+  acceptance signal for the Slice 8 wire path.
+
+### What's next
+
+Per Port.md §5: **Slice 9 — Advanced Settings.** Tiny slice (0.5
+days): device name (`device_name[26]`), VID, PID, firmware-version
+display. No flasher. After that: Slice 10 (polish + v0.1 release —
+app icon, About dialog, error toasts, log file via `tracing`,
+`cargo-bundle` for installer/AppImage, v0.1.0 tag).
+
+---
+
 ## Update 2026-05-17 — Slice 7 (Buttons + Logic + Shifts & Timers) DONE
 
 Largest slice in the plan (3.5-day estimate). Picks up after Slice 6.
