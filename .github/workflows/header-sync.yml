@@ -1,0 +1,77 @@
+name: Wire-format header sync
+
+# Mirrors the header-sync workflow in anpeaco/FreeJoyX and
+# anpeaco/FreeJoyXConfiguratorQt. Catches drift between this repo's
+# vendored/ copies and the firmware repo's canonical common_*.h.
+#
+# See Port.md §10 "Drift detection" for the cross-repo lockstep rule.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    name: Compare vendored/common_*.h with firmware
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v6
+        with:
+          path: configurator-rs
+
+      - name: Checkout firmware
+        uses: actions/checkout@v6
+        with:
+          repository: anpeaco/FreeJoyX
+          path: firmware
+          ref: main
+
+      - name: Compare headers (ignoring comments and whitespace)
+        run: |
+          python3 - <<'PY'
+          import re, sys, pathlib, difflib
+
+          def normalize(path):
+              text = pathlib.Path(path).read_text()
+              # Strip content marked firmware-only (or otherwise sync-exempt).
+              # Markers: /* SYNC_SKIP_BEGIN [description] */ ... /* SYNC_SKIP_END [description] */
+              text = re.sub(
+                  r"/\*\s*SYNC_SKIP_BEGIN\b.*?SYNC_SKIP_END\b.*?\*/",
+                  "", text, flags=re.DOTALL)
+              # Strip C-style /* ... */ block comments (multiline)
+              text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+              # Strip // line comments
+              text = re.sub(r"//[^\n]*", "", text)
+              # Collapse all whitespace to single spaces
+              text = re.sub(r"\s+", " ", text)
+              return text.strip()
+
+          pairs = [
+              ("firmware/application/Inc/common_types.h",
+               "configurator-rs/vendored/common_types.h"),
+              ("firmware/application/Inc/common_defines.h",
+               "configurator-rs/vendored/common_defines.h"),
+          ]
+
+          drift = False
+          for fw, cf in pairs:
+              if normalize(fw) == normalize(cf):
+                  print(f"OK: {fw} matches {cf} (semantic)")
+                  continue
+              drift = True
+              print(f"::error file={cf}::Wire-format drift vs {fw}")
+              # Print first ~20 differing tokens for context
+              a, b = normalize(fw).split(), normalize(cf).split()
+              diff = list(difflib.unified_diff(a, b, lineterm="", n=2))[:25]
+              for line in diff:
+                  print(line)
+
+          if drift:
+              print("\nThis repo's vendored/ headers must match the firmware "
+                    "repo's canonical common_*.h. To refresh, see "
+                    "vendored/README.md, then update the Rust codec in "
+                    "crates/freejoyx-core/src/wire/ to match the new layout.")
+              sys.exit(1)
+          PY
