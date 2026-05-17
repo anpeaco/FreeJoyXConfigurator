@@ -16,13 +16,20 @@
 //! - [`axes`] — `AxisFilter` enum mirroring the 3-bit filter field.
 //! - [`buttons`] — `ButtonType` enum, Button bitfield setters, and the
 //!   per-physical coexistence rule from F103_GESTURE_PLAN.md.
+//! - [`encoders`] — `EncoderMode` enum (1x/2x/4x) mirroring `encoder_t`.
+//! - [`shift_registers`] — `ShiftRegType` enum mirroring
+//!   `shift_reg_config_type_t` (HC165 / CD4021 × pull-down / pull-up).
 
 pub mod axes;
 pub mod buttons;
+pub mod encoders;
 pub mod logic;
 pub mod pins;
+pub mod shift_registers;
 
 pub use axes::AxisFilter;
 pub use buttons::{physical_assignment_blocked, ButtonType, CoexistenceCheck};
+pub use encoders::EncoderMode;
 pub use logic::{validate_logic_buttons, LogicError, LogicOp, BUTTON_TYPE_LOGIC};
 pub use pins::{validate_pins, Board, PinConflict, PinConflictKind, PinFunction};
+pub use shift_registers::ShiftRegType;
