@@ -1116,7 +1116,7 @@ component ButtonsTab inherits Rectangle {
         spacing: 6px;
 
         Text {
-            text: "Buttons + Logic";
+            text: "Buttons";
             color: Palette.accent;
             font-size: 18px;
             font-weight: 600;
@@ -1246,7 +1246,7 @@ component ShiftsTimersTab inherits Rectangle {
         spacing: 10px;
 
         Text {
-            text: "Shifts & Timers";
+            text: "Shifts";
             color: Palette.accent;
             font-size: 18px;
             font-weight: 600;
@@ -2263,8 +2263,8 @@ export component AppWindow inherits Window {
     background: Palette.bg-window;
     preferred-width: 1024px;
     preferred-height: 700px;
-    min-width: 720px;
-    min-height: 480px;
+    min-width: 960px;
+    min-height: 540px;
 
     in property <string> status-text: "starting…";
     in property <bool> connected: false;
@@ -2403,13 +2403,13 @@ export component AppWindow inherits Window {
                     clicked => { root.active-tab = 1; }
                 }
                 TabButton {
-                    label: "Buttons + Logic";
+                    label: "Buttons";
                     icon-source: @image-url("../assets/icons/square-mouse-pointer.svg");
                     selected: root.active-tab == 2;
                     clicked => { root.active-tab = 2; }
                 }
                 TabButton {
-                    label: "Shifts & Timers";
+                    label: "Shifts";
                     icon-source: @image-url("../assets/icons/timer.svg");
                     selected: root.active-tab == 3;
                     clicked => { root.active-tab = 3; }
