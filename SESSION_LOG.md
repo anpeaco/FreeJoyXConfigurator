@@ -3,6 +3,167 @@
 Continues the overnight session that started 2026-05-16. The previous
 entries (bootstrap + Slice 0 + Slice 0.5(a)) are below this header.
 
+## Update 2026-05-17 — Slice 9 (Advanced Settings + device picker) DONE
+
+Originally scoped (per Port.md §5) as just device name + VID + PID +
+firmware-version display — 0.5-day estimate. Maintainer asked mid-loop
+to roll the toolbar device picker into Slice 9 too (was Slice 5's
+deferred "multi-board picker still missing" item). Both surfaces land
+together since both rotate around the same DeviceCandidate plumbing.
+
+Sub-steps 9a–9d.
+
+### 9a — worker: Enumerate + Reopen commands
+
+Two new variants on `freejoyx_device::Command`:
+
+- `Enumerate` → emits `DeviceEvent::Candidates(Vec<DeviceCandidate>)`.
+  Serviced both while connected (inline in `dispatch_pending_commands`)
+  and while idle (inline in the new `poll_idle_commands` /
+  `sleep_with_shutdown`).
+- `Reopen { serial: Option<String> }` → worker drops the currently-open
+  device, swaps in the new serial filter, restarts discovery. `None`
+  falls back to first-enumerated. Same-filter reopen is a no-op.
+
+The mutable `serial_filter` state moves out of the function argument
+into a per-worker `Option<String>` so it can change mid-flight.
+`run_worker` learns a new outcome `IdleAction` (Continue / Shutdown /
+Reopen) and a new pump outcome `ReopenRequested(Option<String>)`. The
+existing two pump outcomes (Shutdown / Disconnected) are untouched.
+
+`poll_shutdown` was replaced by `poll_idle_commands` and
+`sleep_with_shutdown` grew the same return type — both can now drain
+Enumerate inline (so the picker's refresh button works even with no
+device connected) and forward Reopen up to the outer loop.
+
+### 9b — Slint UI: Advanced tab + toolbar device picker
+
+`AdvancedTab` (new): five-field form for the persisted-on-device
+identification. Device name `TextInput` (26-byte slot), VID + PID
+hex `TextInput`s, plus read-only Firmware Version / Board id /
+FreeJoyX build version. Hex inputs accept `0483` or `0x0483`; invalid
+input is silently rejected (no error toast, just no edit applied —
+the user sees the field bounce back to the last valid value).
+
+Toolbar grew a `PillButton` `"Devices ▾"` that opens a
+`PopupWindow` listing every FreeJoy / FreeJoyX HID candidate the
+worker reported. Each row carries the display summary, the serial,
+and an accent dot if it's the currently-connected device. Clicking a
+row sends `Command::Reopen` and closes the popup; an optimistic
+local mark-current update moves the dot immediately so the user sees
+the picker react before the worker's `Connected` event lands.
+
+Three new Slint structs: `AdvancedModel`, `DeviceOption`,
+`DevicePickerRow`. Six new callbacks bubble through `AppWindow`:
+`refresh-devices`, `device-picked(serial)`, plus the three Advanced
+field editors and an implicit `popup.show()` from the toolbar
+button. The Advanced tab button is now enabled; the placeholder
+"Coming in Slice 9" cell is removed alongside the now-dead
+`PlaceholderTab` component.
+
+### 9c — app glue: new crate::advanced module
+
+Same shape as the Slice 7/8 sibling modules (`crate::buttons`,
+`crate::encoders`):
+
+- `build_advanced_model` / `empty_advanced_model` /
+  `merge_params_into_advanced` — three pure functions that
+  produce `AdvancedModel` snapshots for the three states (post-load,
+  pre-load, params-tick-merge). The merge variant preserves the
+  device-name / VID / PID / firmware-version fields and updates only
+  the FreeJoyX build version line; called from `ParamsTick` so users
+  see the build version stream in without a Read.
+- `pack_device_name` packs a typed string back into the 26-byte slot,
+  truncating at 25 chars to leave room for the NUL terminator and
+  zeroing the tail so prior longer names don't linger.
+- `build_candidates_model` / `refresh_candidates_model` build the
+  picker dropdown from the worker's last `Candidates` event +
+  `State.current_serial()` (so the accent dot tracks the live state).
+- `wire_callbacks` wires the five callbacks. The Reopen handler
+  optimistically rewrites the candidates model client-side so the dot
+  moves before the worker's next event.
+
+`State` gained two pub(crate) helpers — `handle_send(Command)` and
+`current_serial()` — so the new module doesn't reach into private
+fields. The `pump_events` switch grew one match arm
+(`DeviceEvent::Candidates`) and was tagged
+`#[allow(clippy::too_many_lines)]` (the function now sits at 121
+lines — refactor candidate for Slice 10 polish).
+
+`run()` also fires off a one-shot `Command::Enumerate` at startup so
+the picker dropdown has content the first time the user opens it,
+even before a `Connected` event arrives.
+
+### 9d — verification
+
+Five-command discipline holds:
+
+- `cargo fmt --all --check` ✓
+- `cargo clippy --workspace --all-targets -- -D warnings` ✓
+- `cargo test --workspace` ✓ — **80 tests pass** (was 78 at end of
+  Slice 8; +2 from the new `advanced::tests` — `pack_device_name`
+  truncate-and-zero behaviour, hex parsing edge cases)
+- `cargo build --workspace --release` ✓
+- `cargo run -p freejoyx-app -- list` + `ui` smoke ✓ — UI launched
+  against the FreeJoyX 0.0.2 BluePill, worker reported the full
+  6-board candidate list, picker popup rendered with the connected
+  device accent-dotted.
+
+`.claude/scheduled_tasks.lock` added to gitignore — harness state,
+not source.
+
+### Notes for downstream slices
+
+- **No "(Re)connect" status while Reopen is in flight.** When the
+  user clicks a different device the toolbar status briefly shows
+  the prior device name until the worker emits `Disconnected` (then
+  `Connected` for the new one). This gap is small (<200 ms) but
+  visible. Optimistic status text would polish it.
+- **VID / PID don't gate against `vid_pid_in_use` heuristics.**
+  Setting a clashing VID/PID would let two boards stomp each other
+  in Windows HID enumeration. The Qt configurator has no such gate
+  either; out of scope for v0.1.
+- **Device-name input is UTF-8-tolerant but byte-truncating.** A
+  user pasting a 24-character name that turns into 30 UTF-8 bytes
+  gets the tail lopped at byte 25 — possibly mid-codepoint. Real
+  configs use ASCII so this is a corner case, but a polish item
+  would replace `pack_device_name`'s `truncated[..len]` with a
+  char-boundary-respecting walk.
+- **Optimistic picker update can disagree with worker reality**
+  briefly. If the worker fails to open the requested device (busy /
+  permissions / etc.) the candidates model will still mark the
+  failed serial as current until the next `Candidates` event lands.
+  Pulling enumerate cadence higher in the picker would smooth this;
+  the Connected handler already kicks off an Enumerate, so the
+  drift window is normally short.
+- **Bench verification of write-back roundtrip across all v0.1
+  fields still pending.** Read → edit (every editable field across
+  all 7 tabs) → Write → Read-back-byte-identical is the acceptance
+  signal for the entire v0.1 surface. The cross-trip tests at the
+  fixture level prove the codec; live bench verification is the
+  remaining loop.
+
+### What's next
+
+Per Port.md §5: **Slice 10 — Polish + v0.1 release.** The final slice.
+Done-when: app icon, About dialog, error toasts (incl. the
+unknown-firmware-version → "use Qt app" pointer per §1.2), log file
+via `tracing`, `cargo-bundle` for `.msi` / `.dmg`, AppImage script,
+v0.1.0 tag + release notes.
+
+Some items already partial:
+- `tracing` is wired (the worker logs Connected / Disconnected / errors
+  at info/warn level) but no file sink yet.
+- Error toasts have a status-text fallback in every tab; promoting
+  the worst of those to a proper toast (red banner with auto-dismiss)
+  is the UX upgrade.
+- Unknown-firmware-version gate per Port.md §1.2: the configurator
+  currently accepts whatever the worker hands it (Slice 4 / 5 notes
+  flagged this). Refusing with a toast pointing at the Qt app is
+  Slice 10 territory.
+
+---
+
 ## Update 2026-05-17 — Slice 8 (Encoders + Shift Registers) DONE
 
 Two new tabs, two new domain modules, one new UI-glue module. Picks up
