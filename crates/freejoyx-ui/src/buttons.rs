@@ -77,37 +77,67 @@ fn set_timer_value(cfg: &mut DeviceConfig, index: usize, v: u16) {
     }
 }
 
-/// Rebuild every button row from `cfg`. The model is rebuilt wholesale
-/// the first time (or after a load/read) and per-row otherwise so a
-/// `TextInput` in mid-edit keeps focus.
+/// Buttons-tab filter inputs. Cheaper to pass as a small struct than as
+/// 4 ad-hoc args. `hide_unused` hides slots whose `physical_num` is unset
+/// (`< 0`) unless the slot is force-shown via [`Self::force_shown`].
+/// `filter_physical` (`Some(n)`) restricts to slots that map to a
+/// physical input. `filter_category` (`Some(c)`) restricts to slots
+/// whose `ButtonType` belongs to category `c`.
+#[derive(Debug, Clone)]
+pub struct ButtonFilter<'a> {
+    pub hide_unused: bool,
+    pub filter_physical: Option<i8>,
+    pub filter_category: Option<ButtonTypeCategory>,
+    pub force_shown: &'a std::collections::BTreeSet<usize>,
+}
+
+fn slot_visible(filter: &ButtonFilter<'_>, slot: usize, btn: &Button) -> bool {
+    // "+ Add"-promoted slots stay visible regardless of the filter.
+    if filter.force_shown.contains(&slot) {
+        return true;
+    }
+    if filter.hide_unused && btn.physical_num < 0 {
+        return false;
+    }
+    if let Some(want_phy) = filter.filter_physical {
+        if btn.physical_num != want_phy {
+            return false;
+        }
+    }
+    if let Some(want_cat) = filter.filter_category {
+        let bt = ButtonType::from_u8(btn.button_type);
+        match bt {
+            Some(t) if t.category() == want_cat => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Rebuild the button-row model honoring the current filter. Always
+/// rebuilds wholesale because the visible row count can change row-to-
+/// row when any filter input flips. Live-tick refreshes from
+/// [`refresh_button_row`] still hit individual rows by wire-slot.
 pub fn refresh_button_model(
     model: &Rc<VecModel<ButtonRow>>,
     cfg: &DeviceConfig,
     params: Option<&ParamsReport>,
+    filter: &ButtonFilter<'_>,
 ) {
     let logic_errors = validate_logic_buttons(cfg);
-
-    if model.row_count() != MAX_BUTTONS_NUM {
-        while model.row_count() > 0 {
-            model.remove(0);
-        }
-        for slot in 0..MAX_BUTTONS_NUM {
-            model.push(build_button_row(
-                slot,
-                &cfg.buttons[slot],
-                params,
-                &logic_errors,
-            ));
-        }
-        return;
+    while model.row_count() > 0 {
+        model.remove(0);
     }
     for slot in 0..MAX_BUTTONS_NUM {
-        let row = build_button_row(slot, &cfg.buttons[slot], params, &logic_errors);
-        model.set_row_data(slot, row);
+        let btn = &cfg.buttons[slot];
+        if !slot_visible(filter, slot, btn) {
+            continue;
+        }
+        model.push(build_button_row(slot, btn, params, &logic_errors));
     }
 }
 
-fn build_button_row(
+pub fn build_button_row(
     slot: usize,
     btn: &Button,
     params: Option<&ParamsReport>,
@@ -136,6 +166,7 @@ fn build_button_row(
         .unwrap_or_default();
     let (phy, log) = pressed_bits(params, slot);
     ButtonRow {
+        slot: i32::try_from(slot).unwrap_or(0),
         physical_num: i32::from(btn.physical_num),
         type_label: SharedString::from(type_label),
         type_index: typed.map(ButtonType::to_u8).map_or(-1, i32::from),
@@ -243,19 +274,26 @@ pub fn mark_dirty(window: &slint::Weak<AppWindow>) {
 }
 
 /// Refresh one button row in the model after a per-slot mutation.
-/// Re-runs `validate_logic_buttons` only across that slot's neighbours
-/// — actually, simpler: re-run it over the full config and pull the
-/// matching error. The validator is O(128) and runs only on edit,
-/// negligible.
+/// Filters mean the model row count is no longer 128, so we look up
+/// the visible row whose `slot` matches `wire_slot`. If the row isn't
+/// in the visible model (slot was filtered out) we do nothing.
 pub fn refresh_button_row(
     model: &Rc<VecModel<ButtonRow>>,
-    slot: usize,
+    wire_slot: usize,
     cfg: &DeviceConfig,
     params: Option<&ParamsReport>,
 ) {
     let logic_errors = validate_logic_buttons(cfg);
-    let row = build_button_row(slot, &cfg.buttons[slot], params, &logic_errors);
-    model.set_row_data(slot, row);
+    let row = build_button_row(wire_slot, &cfg.buttons[wire_slot], params, &logic_errors);
+    let wire_slot_i32 = i32::try_from(wire_slot).unwrap_or(0);
+    for visible_idx in 0..model.row_count() {
+        if let Some(existing) = model.row_data(visible_idx) {
+            if existing.slot == wire_slot_i32 {
+                model.set_row_data(visible_idx, row);
+                return;
+            }
+        }
+    }
 }
 
 /// Build the static category-grouped picker entries (one header per
@@ -480,6 +518,11 @@ pub fn wire_callbacks(
         });
     }
 
+    // Issue #5 filter callbacks. Each mutates State + rebuilds the
+    // button model + pushes the UI mirrors so the strip's checkboxes /
+    // labels reflect the current filter.
+    wire_filter_callbacks(window, state, button_model);
+
     // Shift slot edit (i8 button index, -1 = unused).
     {
         let s = state.clone();
@@ -559,4 +602,124 @@ fn refresh_after_button_edit(
 
 fn clamp_i8(v: i32) -> i8 {
     i8::try_from(v.clamp(i32::from(i8::MIN), i32::from(i8::MAX))).unwrap_or(0)
+}
+
+/// Rebuild the button model from current state + push the visible-count
+/// mirror to the UI. Used by every filter callback below.
+fn rebuild_filtered(
+    state: &Rc<RefCell<crate::app::State>>,
+    button_model: &Rc<VecModel<ButtonRow>>,
+    window: &slint::Weak<AppWindow>,
+) {
+    let s = state.borrow();
+    let Some(cfg) = s.last_config.as_ref() else {
+        return;
+    };
+    let filter = crate::app::build_button_filter(&s);
+    refresh_button_model(button_model, cfg, s.last_params.as_ref(), &filter);
+    let visible = i32::try_from(button_model.row_count()).unwrap_or(0);
+    if let Some(w) = window.upgrade() {
+        w.set_buttons_visible_count(visible);
+        w.set_buttons_hide_unused(s.btn_hide_unused);
+        w.set_buttons_filter_physical(s.btn_filter_physical.map_or(-1, i32::from));
+        let label = s
+            .btn_filter_category
+            .and_then(|i| ButtonTypeCategory::all().nth(i))
+            .map_or("All", ButtonTypeCategory::label);
+        w.set_buttons_filter_category_label(SharedString::from(label));
+    }
+}
+
+/// Number of category-cycle positions: 11 categories + "All".
+const CATEGORY_CYCLE_LEN: usize = 12;
+
+fn wire_filter_callbacks(
+    window: &AppWindow,
+    state: &Rc<RefCell<crate::app::State>>,
+    button_model: &Rc<VecModel<ButtonRow>>,
+) {
+    {
+        let s = state.clone();
+        let m = button_model.clone();
+        let w = window.as_weak();
+        window.on_buttons_hide_unused_toggled(move || {
+            {
+                let mut st = s.borrow_mut();
+                st.btn_hide_unused = !st.btn_hide_unused;
+            }
+            rebuild_filtered(&s, &m, &w);
+        });
+    }
+    {
+        let s = state.clone();
+        let m = button_model.clone();
+        let w = window.as_weak();
+        window.on_buttons_filter_physical_edited(move |v| {
+            {
+                let mut st = s.borrow_mut();
+                st.btn_filter_physical = if v < 0 {
+                    None
+                } else {
+                    Some(clamp_i8(v))
+                };
+            }
+            rebuild_filtered(&s, &m, &w);
+        });
+    }
+    {
+        let s = state.clone();
+        let m = button_model.clone();
+        let w = window.as_weak();
+        window.on_buttons_filter_physical_cleared(move || {
+            {
+                let mut st = s.borrow_mut();
+                st.btn_filter_physical = None;
+            }
+            rebuild_filtered(&s, &m, &w);
+        });
+    }
+    {
+        let s = state.clone();
+        let m = button_model.clone();
+        let w = window.as_weak();
+        window.on_buttons_filter_category_cycled(move || {
+            {
+                let mut st = s.borrow_mut();
+                // Encode "All" as position 11; categories occupy 0..=10.
+                let current = st
+                    .btn_filter_category
+                    .unwrap_or(CATEGORY_CYCLE_LEN - 1);
+                let next = (current + 1) % CATEGORY_CYCLE_LEN;
+                st.btn_filter_category = if next == CATEGORY_CYCLE_LEN - 1 {
+                    None
+                } else {
+                    Some(next)
+                };
+            }
+            rebuild_filtered(&s, &m, &w);
+        });
+    }
+    {
+        let s = state.clone();
+        let m = button_model.clone();
+        let w = window.as_weak();
+        window.on_buttons_add_clicked(move || {
+            // Find the first wire slot not already shown (either via
+            // assigned physical or already in force_shown). Promote it
+            // to the visible list.
+            let promoted = {
+                let st = s.borrow();
+                let Some(cfg) = st.last_config.as_ref() else {
+                    return;
+                };
+                (0..MAX_BUTTONS_NUM).find(|i| {
+                    !st.btn_force_shown.contains(i) && cfg.buttons[*i].physical_num < 0
+                })
+            };
+            if let Some(idx) = promoted {
+                s.borrow_mut().btn_force_shown.insert(idx);
+                rebuild_filtered(&s, &m, &w);
+            }
+        });
+    }
 }

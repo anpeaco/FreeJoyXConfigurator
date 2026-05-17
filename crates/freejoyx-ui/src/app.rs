@@ -19,10 +19,13 @@
 //!   changes.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::time::Duration;
 
-use freejoyx_core::domain::{validate_pins, AxisFilter, Board, PinConflict, PinFunction};
+use freejoyx_core::domain::{
+    validate_pins, AxisFilter, Board, ButtonTypeCategory, PinConflict, PinFunction,
+};
 use freejoyx_core::persist::{load_from_file, save_to_file};
 use freejoyx_core::wire::{
     is_supported_firmware_version, DeviceConfig, ParamsReport, MAX_AXIS_NUM,
@@ -58,6 +61,32 @@ pub(crate) struct State {
     /// Prevents the toast from re-asserting itself on every
     /// `ParamsTick` after the user dismisses it.
     unsupported_fw_flagged: bool,
+    /// Buttons-tab filter state (issue #5). Drives which rows make it
+    /// into the visible button model. Persisted across config reloads
+    /// but cleared on disconnect.
+    pub(crate) btn_hide_unused: bool,
+    pub(crate) btn_filter_physical: Option<i8>,
+    /// `None` = show all categories. `Some(cat_index)` filters to
+    /// `ButtonTypeCategory::all().nth(cat_index)`.
+    pub(crate) btn_filter_category: Option<usize>,
+    /// Wire-slot indices the user explicitly clicked "+ Add" on. The
+    /// row is force-shown in the visible model even if its
+    /// `physical_num` is still unassigned.
+    pub(crate) btn_force_shown: BTreeSet<usize>,
+}
+
+/// Build a [`buttons_glue::ButtonFilter`] borrowing from the held
+/// state. Used by every model-refresh call site that touches the
+/// buttons model.
+pub(crate) fn build_button_filter(state: &State) -> buttons_glue::ButtonFilter<'_> {
+    buttons_glue::ButtonFilter {
+        hide_unused: state.btn_hide_unused,
+        filter_physical: state.btn_filter_physical,
+        filter_category: state
+            .btn_filter_category
+            .and_then(|i| ButtonTypeCategory::all().nth(i)),
+        force_shown: &state.btn_force_shown,
+    }
 }
 
 impl State {
@@ -70,6 +99,10 @@ impl State {
             status: "waiting for device…".to_string(),
             last_params: None,
             unsupported_fw_flagged: false,
+            btn_hide_unused: false,
+            btn_filter_physical: None,
+            btn_filter_category: None,
+            btn_force_shown: BTreeSet::new(),
         }
     }
 
@@ -349,11 +382,16 @@ fn pump_events(
                         .as_ref()
                         .map(|p| (p.raw_axis_data, p.axis_data));
                     refresh_axis_model(axis_model, &cfg, live);
-                    buttons_glue::refresh_button_model(
-                        button_model,
-                        &cfg,
-                        params_snapshot.as_ref(),
-                    );
+                    {
+                        let s = state.borrow();
+                        let filter = build_button_filter(&s);
+                        buttons_glue::refresh_button_model(
+                            button_model,
+                            &cfg,
+                            params_snapshot.as_ref(),
+                            &filter,
+                        );
+                    }
                     let merged = advanced_glue::merge_params_into_advanced(
                         &window.get_advanced(),
                         version_triple.0,
@@ -385,7 +423,18 @@ fn pump_events(
                 drop(s);
                 refresh_pin_model(pin_model, &cfg, board);
                 refresh_axis_model(axis_model, &cfg, live);
-                buttons_glue::refresh_button_model(button_model, &cfg, params_for_buttons.as_ref());
+                {
+                    let s = state.borrow();
+                    let filter = build_button_filter(&s);
+                    buttons_glue::refresh_button_model(
+                        button_model,
+                        &cfg,
+                        params_for_buttons.as_ref(),
+                        &filter,
+                    );
+                }
+                let visible = i32::try_from(button_model.row_count()).unwrap_or(0);
+                window.set_buttons_visible_count(visible);
                 buttons_glue::refresh_shift_model(shift_model, &cfg);
                 buttons_glue::refresh_timer_model(timer_model, &cfg);
                 encoders_glue::refresh_soft_encoder_model(soft_encoder_model, &cfg);
@@ -559,11 +608,16 @@ fn wire_load_callback(window: &AppWindow, state: &Rc<RefCell<State>>, sinks: &Lo
                 };
                 refresh_pin_model(&pin_model, &cfg_for_model, board);
                 refresh_axis_model(&axis_model, &cfg_for_model, live);
-                buttons_glue::refresh_button_model(
-                    &button_model,
-                    &cfg_for_model,
-                    params_for_buttons.as_ref(),
-                );
+                {
+                    let s = state.borrow();
+                    let filter = build_button_filter(&s);
+                    buttons_glue::refresh_button_model(
+                        &button_model,
+                        &cfg_for_model,
+                        params_for_buttons.as_ref(),
+                        &filter,
+                    );
+                }
                 buttons_glue::refresh_shift_model(&shift_model, &cfg_for_model);
                 buttons_glue::refresh_timer_model(&timer_model, &cfg_for_model);
                 encoders_glue::refresh_soft_encoder_model(&soft_encoder_model, &cfg_for_model);

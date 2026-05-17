@@ -669,6 +669,9 @@ component AxesTab inherits Rectangle {
 // freejoyx-core::domain::buttons — if the user tries to step the
 // type cycle to a blocked variant, the cycle skips past it.
 struct ButtonRow {
+    // Wire slot index (0..127). The model can be filtered or reordered,
+    // so the for-loop position is no longer authoritative for callbacks.
+    slot: int,
     physical-num: int,
     type-label: string,
     type-index: int,
@@ -953,6 +956,12 @@ component ButtonsHeaderRow inherits Rectangle {
 
 component ButtonsTab inherits Rectangle {
     in property <[ButtonRow]> buttons;
+    // Filter state (issue #5) — passed from AppWindow so the Rust side
+    // can mutate freely and the strip below reflects the truth.
+    in property <bool> hide-unused;
+    in property <int> filter-physical;  // -1 when not filtering
+    in property <string> filter-category-label;  // "All" when not filtering
+    in property <int> visible-count;
     callback physical-edited(int, int);
     callback type-picker-opened(int);
     callback shift-cycled(int);
@@ -961,6 +970,11 @@ component ButtonsTab inherits Rectangle {
     callback src-b-edited(int, int);
     callback op-cycled(int);
     callback debounce-cycled(int);
+    callback hide-unused-toggled();
+    callback filter-physical-edited(int);
+    callback filter-physical-cleared();
+    callback filter-category-cycled();
+    callback add-button-clicked();
 
     background: Palette.bg-panel;
 
@@ -975,10 +989,77 @@ component ButtonsTab inherits Rectangle {
             font-weight: 600;
         }
         Text {
-            text: "128 button slots. Type cycle skips assignments blocked by the per-physical gesture rule. LOGIC rows expose op / Source B / debounce in a sub-row under the Type column. Amber dot = physical pressed; green dot = logical state.";
+            text: "128 button slots. Click the Type cell to pick from category groups; blocked types are greyed with the conflicting slot's name. LOGIC rows expose op / Source B / debounce in a sub-row under the Type column. Amber dot = physical pressed; green dot = logical state.";
             color: Palette.text-dim;
             font-size: 11px;
             wrap: word-wrap;
+        }
+
+        // Filter strip (issue #5).
+        Rectangle {
+            height: 32px;
+            background: Palette.bg-cell;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 4px;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 10px;
+                alignment: start;
+                LucideIcon {
+                    source: @image-url("../assets/icons/filter.svg");
+                    tint: Palette.text-dim;
+                    size: 14px;
+                    y: (parent.height - self.height) / 2;
+                }
+                CheckCell {
+                    label: "Hide unused";
+                    checked: root.hide-unused;
+                    toggled => { root.hide-unused-toggled(); }
+                }
+                NumberCell {
+                    label: "Physical";
+                    value: root.filter-physical;
+                    field-width: 56px;
+                    edited(v) => { root.filter-physical-edited(v); }
+                }
+                if root.filter-physical >= 0: Rectangle {
+                    width: 22px;
+                    height: 22px;
+                    y: (parent.height - self.height) / 2;
+                    background: clr-ta.has-hover ? Palette.bg-cell-hover : transparent;
+                    border-radius: 3px;
+                    LucideIcon {
+                        source: @image-url("../assets/icons/x.svg");
+                        tint: Palette.text-dim;
+                        size: 12px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    clr-ta := TouchArea {
+                        clicked => { root.filter-physical-cleared(); }
+                    }
+                }
+                CycleCell {
+                    label: "Type";
+                    value-label: root.filter-category-label;
+                    value-width: 116px;
+                    cycled => { root.filter-category-cycled(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: root.visible-count + " / 128";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                PillButton {
+                    label: "Add button";
+                    icon-source: @image-url("../assets/icons/plus.svg");
+                    clicked => { root.add-button-clicked(); }
+                }
+            }
         }
 
         ButtonsHeaderRow { }
@@ -992,7 +1073,7 @@ component ButtonsTab inherits Rectangle {
                 spacing: 2px;
                 for btn-data[i] in root.buttons: ButtonRowView {
                     entry: btn-data;
-                    slot: i;
+                    slot: btn-data.slot;
                     physical-edited(s, v) => { root.physical-edited(s, v); }
                     type-picker-opened(s) => { root.type-picker-opened(s); }
                     shift-cycled(s) => { root.shift-cycled(s); }
@@ -2086,6 +2167,13 @@ export component AppWindow inherits Window {
     in property <int> button-type-picker-slot: 0;
     in property <int> button-type-picker-current: 0;
 
+    // Buttons-tab filter state (issue #5). Rust owns the truth; these
+    // are read-only mirrors so the strip can render its current state.
+    in property <bool> buttons-hide-unused: false;
+    in property <int> buttons-filter-physical: -1;
+    in property <string> buttons-filter-category-label: "All";
+    in property <int> buttons-visible-count: 128;
+
     callback read-clicked();
     callback write-clicked();
     callback save-clicked();
@@ -2107,6 +2195,11 @@ export component AppWindow inherits Window {
     callback button-type-picked(int /* slot */, int /* type-index */);
     callback button-type-picker-dismissed();
     callback button-shift-cycled(int);
+    callback buttons-hide-unused-toggled();
+    callback buttons-filter-physical-edited(int);
+    callback buttons-filter-physical-cleared();
+    callback buttons-filter-category-cycled();
+    callback buttons-add-clicked();
     callback button-inverted-toggled(int);
     callback button-disabled-toggled(int);
     callback button-src-b-edited(int, int);
@@ -2239,6 +2332,10 @@ export component AppWindow inherits Window {
             }
             if root.active-tab == 2: ButtonsTab {
                 buttons: root.buttons;
+                hide-unused: root.buttons-hide-unused;
+                filter-physical: root.buttons-filter-physical;
+                filter-category-label: root.buttons-filter-category-label;
+                visible-count: root.buttons-visible-count;
                 physical-edited(s, v) => { root.button-physical-edited(s, v); }
                 type-picker-opened(s) => { root.button-type-picker-opened(s); }
                 shift-cycled(s) => { root.button-shift-cycled(s); }
@@ -2247,6 +2344,11 @@ export component AppWindow inherits Window {
                 src-b-edited(s, v) => { root.button-src-b-edited(s, v); }
                 op-cycled(s) => { root.button-op-cycled(s); }
                 debounce-cycled(s) => { root.button-debounce-cycled(s); }
+                hide-unused-toggled => { root.buttons-hide-unused-toggled(); }
+                filter-physical-edited(v) => { root.buttons-filter-physical-edited(v); }
+                filter-physical-cleared => { root.buttons-filter-physical-cleared(); }
+                filter-category-cycled => { root.buttons-filter-category-cycled(); }
+                add-button-clicked => { root.buttons-add-clicked(); }
             }
             if root.active-tab == 3: ShiftsTimersTab {
                 shifts: root.shifts;
