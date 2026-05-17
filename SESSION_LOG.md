@@ -3,6 +3,167 @@
 Continues the overnight session that started 2026-05-16. The previous
 entries (bootstrap + Slice 0 + Slice 0.5(a)) are below this header.
 
+## Update 2026-05-17 — Slice 6 (Axes tab, linear) DONE
+
+Picks up after Slice 3. Per Port.md §5 Slice 6's surface area is
+"Calibration, filter, deadband, resolution, channel. No curve editor.
+Live axis value overlay from ParamsTick." Landed in three sub-steps
+(6a–6c). Also committed the backlog of prior-slice work that had been
+sitting in the working tree (8 commits, see history) before starting.
+
+### 6a — axis flag setters + AxisFilter enum
+
+`freejoyx_core::wire::config::AxisConfig` gets setters paired with
+every v0.1-surface getter: `set_out_enabled`, `set_inverted`,
+`set_is_centered`, `set_filter`, `set_resolution`, `set_channel`,
+`set_deadband_size`, `set_is_dynamic_deadband`. Each goes through
+two new private helpers: `set_bit(byte, mask, v)` for single-bit
+toggles, and `set_bits(byte, shift, mask, v)` for multi-bit fields
+(which also truncate oversize values to the mask width — so the UI
+never spills into adjacent bitfields even if a caller passes garbage).
+
+Two new unit tests anchor the behaviour:
+
+| Test | What it proves |
+|---|---|
+| `axis_config_setters_isolate_their_bits` | Each setter touches only its own bit positions; the surrounding bits in the same byte don't shift |
+| `axis_config_setters_truncate_oversize_values` | Calling `set_filter(0xff)` writes `0x07`, not `0xff` — same for resolution / channel / deadband_size |
+
+`freejoyx_core::domain::axes` (new module): `AxisFilter` enum mirroring
+the 3-bit `filter_t` from `vendored/common_defines.h`. Labels match
+`axesextended.h::m_filterList` so the Slint dropdown reads identically
+to the Qt slider tooltip. `from_u8` masks the input to 3 bits before
+matching so every `u8` round-trips deterministically through the eight
+defined variants. Re-exported from `domain::`.
+
+Three unit tests cover the round-trip, the high-bit masking edge
+case, and the `all()` iterator ordering.
+
+### 6b — Slint AxesTab + AxisRow struct
+
+`ui/app.slint` gains:
+
+- `AxisRow` struct with all v0.1 fields (booleans, calib min/center/max,
+  filter index + label, deadband size + dynamic flag, resolution,
+  channel) plus `live-raw` / `live-out` for the params overlay.
+- `CheckCell`, `NumberCell` (`TextInput` with the dark-cockpit
+  styling and number input-type), and `CycleCell` (click-to-cycle
+  pattern, same shape as the Pins tab function picker) — three
+  reusable controls that compose the per-axis card.
+- `AxisRowView` — one card per axis. Two rows: header (title +
+  three checkboxes + live values), then form (3× calib + filter +
+  deadband + dyn + resolution + channel).
+- `AxesTab` — scrollable list of 8 cards. Surfaces 11 callbacks
+  upward (one per editable control).
+
+Eleven new callbacks bubble up through `AppWindow`:
+`axis-out-toggled`, `axis-inverted-toggled`, `axis-centered-toggled`,
+`axis-calib-{min,center,max}-edited`, `axis-filter-cycled`,
+`axis-deadband-edited`, `axis-dyn-deadband-toggled`,
+`axis-resolution-cycled`, `axis-channel-cycled`. The Axes tab button
+in the strip is now enabled.
+
+### 6c — app.rs glue + live params overlay
+
+`State` gains `last_params: Option<ParamsReport>` so the most recent
+tick is available when rebuilding axis rows (live raw/out columns).
+
+`pump_events`:
+- `ParamsTick(p)` now updates `state.last_params` and, if there's a
+  config loaded, refreshes the axis model per-row (`set_row_data`,
+  not wholesale rebuild — TextInput focus would lose its place
+  otherwise).
+- `ConfigReceived` and Load both push the params snapshot into
+  `refresh_axis_model` so the first render has live values when
+  the device is already streaming.
+
+`wire_axis_callbacks` (new): factors the 11 callbacks through two
+helpers — `mk_toggle` for the boolean/cycle callbacks (`fn(&mut
+AxisConfig)`), `mk_int` for the int-edited ones. Each callback funnels
+through `mutate_axis`, which clones the relevant params slice out of
+state *before* taking the `&mut DeviceConfig`, so the borrow checker
+stays happy. Side effects of every mutation: row refresh in the
+model, `can_write = connected`, `can_save = true`.
+
+`refresh_axis_model` (new) and `build_axis_row` (new) own the
+config-→-AxisRow mapping. The first does a wholesale rebuild if the
+model size is wrong (load / first-read), otherwise per-row update
+(live tick).
+
+`run()` shrank back under the clippy `too_many_lines` cap (was 105
+lines after adding the axis-model wiring) by factoring the read /
+write / pin-changed callback wirings into `wire_read_callback`,
+`wire_write_callback`, `wire_pin_callback` helpers — same pattern
+the save/load helpers already used.
+
+### 6d — verification
+
+Five-command discipline holds:
+
+- `cargo fmt --all --check` ✓
+- `cargo clippy --workspace --all-targets -- -D warnings` ✓
+- `cargo test --workspace` ✓ — **62 tests pass** (was 57 at end of
+  Slice 3; +3 AxisFilter unit + 2 AxisConfig setter unit)
+- `cargo build --workspace --release` ✓
+- `cargo run -p freejoyx-app -- list` ✓ — all 6 boards still visible
+- `timeout 4 cargo run -p freejoyx-app -- ui` ✓ — window came up,
+  worker connected to the first board, exited via SIGTERM at the
+  4-second mark.
+
+### Notes for downstream slices
+
+- **Live overlay throttling deferred.** Port.md §6's risk register
+  flags `ParamsTick` at full cadence (1 kHz on the F103 firmware,
+  measured ~20 Hz over USB on the bench) as a potential UI burden.
+  Per-row `set_row_data` is cheap enough that 8 rows × 20 Hz is
+  invisible on the dev machine; if a future slice surfaces 128
+  button overlays at the same cadence, batch on the worker side
+  to ~30 Hz then.
+- **Cycle pattern, not popup combobox, for filter / resolution /
+  channel.** Same trade-off as the Pin tab function picker (Slice
+  5 notes). For 8 / 16 / 16 entries it's tolerable; if the Buttons
+  tab in Slice 7 needs a longer dropdown (button type has ~30
+  entries) it'll force the swap to `std-widgets::ComboBox`. Doing
+  it then also covers all three existing cycle cells.
+- **Source-main / source-secondary, prescaler, divider, function,
+  per-axis button hooks, axes-to-buttons, sensor I2C** all round-
+  trip but stay unedited. Port.md §1.1 explicitly defers the sensor
+  surface to v0.1.1+; the source-main picker is the most likely
+  next-pull from the deferred set if/when an actual user complains.
+- **No format coercion on i16 inputs.** `clamp_i16` saturates;
+  pasted `999999` into calib-min lands as `32767` silently. A toast
+  on saturation would be a polite polish item for Slice 10.
+- **Bench verification of write-back still pending.** Read → edit
+  axis → Write → read-back-byte-identical is the trip that proves
+  the setters wire through the codec correctly under real I/O.
+  Trivial smoke for the next time the maintainer is at the bench.
+
+### What's next
+
+Per Port.md §5: **Slice 7 — Buttons + Logic + Shifts & Timers.** The
+largest slice in the plan (3.5 days estimate). 128-button grid, type
+picker including NORMAL / TOGGLE / LOGIC / LONG_PRESS / DOUBLE_TAP /
+POVs / encoders-as-buttons / radios / sequentials. LOGIC operator
+picker + Source B + shift modifier. Per-physical coexistence filter
+(Step 4 firmware rule: `{NORMAL, LONG_PRESS, DOUBLE_TAP}` only on a
+given physical input). Global timers (Timer1/2/3 + Debounce +
+LongPress + DoubleTap windows) on the Shifts & Timers tab. Live state
+overlay from `ParamsTick.phy_button_data` / `log_button_data` /
+`shift_button_data`.
+
+This is also where Slice 3's LOGIC validator gets its first UI
+consumer — `validate_logic_buttons` already returns the
+`SourceAUnset` / `SourceBUnsetForBinaryOp` / `OpOutOfRange` set;
+Slice 7 needs to surface it on the per-button row the same way the
+Pins tab surfaces `PinConflict`.
+
+Slice 7 is also the most likely place the cycle-cell-vs-combobox
+trade-off forces the swap; budget for a `std-widgets::ComboBox`
+detour early in the slice if the button-type dropdown ends up at
+~30 entries.
+
+---
+
 ## Update 2026-05-17 — Slice 3 (on-disk RON + validators) DONE
 
 Picks up directly after Slice 5. Per Port.md §5 ordering, Slice 3 comes
