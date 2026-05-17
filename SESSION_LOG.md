@@ -3,6 +3,174 @@
 Continues the overnight session that started 2026-05-16. The previous
 entries (bootstrap + Slice 0 + Slice 0.5(a)) are below this header.
 
+## Update 2026-05-17 — Slice 10 (Polish + v0.1 release) DONE
+
+The final slice. Sub-steps 10a–10g land the unsupported-firmware gate,
+the toast + About + Help-menu UI, the rolling log file, the app icon,
+and the packaging/release-notes scaffolding. Slice 10h files the
+maintainer's mid-slice UI enhancement ideas as issues against the
+configurator repo so they don't get lost in the post-release lull.
+
+The v0.1.0 git tag + GitHub Release publication are user-driven (push
+is autonomous-off per the resume skill); workspace version moved
+`0.1.0-pre → 0.1.0` here, the tag is the next step.
+
+### 10a — Firmware-version gate
+
+New `freejoyx_core::wire::firmware_version` module exposing
+`SUPPORTED_FIRMWARE_VERSION = 0x0010`, `FIRMWARE_VERSION_MASK = 0xFFF0`,
+`mask_group(v)`, and `is_supported_firmware_version(v) -> bool`. The
+gate honours the locked Port.md §9 decision: anything outside the
+`& 0xFFF0` mask group of `0x0010` is refused. Five tests cover the
+target, build-nibble drift, legacy upstream `0x17XX`, future-group
+`0x0020+`, and the mask helper itself.
+
+The pre-existing `DecodeError::UnsupportedFirmwareVersion` variant
+stays; nothing in the codec emits it yet because the codec deliberately
+round-trips bytes for forward-compat. The gate is enforced at the UI
+layer instead (see 10b).
+
+### 10b — Toast + About + Help menu
+
+New `ToastBanner` Slint component (severity 1/2/3 → info/warn/error)
+renders between the toolbar and the tab strip. `pump_events` flips it
+on when the first `ParamsTick` from an incompatible board lands; the
+banner stays until the user dismisses it or the device disconnects.
+Read / Write are disabled while the flag holds. The
+`unsupported_fw_flagged` bit on `State` debounces the gate so it fires
+once per device, not once per tick.
+
+New `AboutDialog` Slint component is a modal overlay with the app
+version, build revision (git short hash via a new `build.rs` in
+`freejoyx-ui`), supported firmware mask group, GPLv3 line, and repo
+URL. Clicking outside the dialog or the Close button dismisses it.
+
+Toolbar grew a `Help ▾` `PillButton` with two items — "About
+FreeJoyXConfigurator" (opens the dialog) and "Open Log Folder" (10d).
+Both open as a `PopupWindow` that closes on outside-click.
+
+Two new `AppWindow` properties (`toast-severity`, `toast-message`),
+three new info-display properties (`app-version`, `build-rev`,
+`supported-fw`), one in-out (`about-open`), and two new callbacks
+(`toast-dismissed`, `open-log-folder`).
+
+### 10c — About dialog
+
+Surfaced via the Help menu above. `set_app_version` is fed by
+`env!("CARGO_PKG_VERSION")`, `set_build_rev` by
+`env!("FREEJOYX_BUILD_REV")` (emitted by the new
+`crates/freejoyx-ui/build.rs` running `git rev-parse --short=8 HEAD`
+at compile time; falls back to "unknown" when git is unavailable),
+and `set_supported_fw` by `format!("{SUPPORTED_FIRMWARE_VERSION:04X}")`.
+
+### 10d — Rolling log file
+
+New workspace dep `tracing-appender = "0.2"` (justified — official
+companion to `tracing` for file output; "no new deps without reason"
+satisfied). `freejoyx-app`'s `init_tracing()` now stacks a stderr fmt
+layer and a daily-rolling file layer; the file lives in an
+OS-appropriate user-state directory (`%LOCALAPPDATA%\FreeJoyXConfigurator\logs`
+on Windows, `$HOME/Library/Logs/FreeJoyXConfigurator` on macOS,
+`$XDG_STATE_HOME/freejoyx-configurator/logs` or
+`$HOME/.local/state/...` on Linux). The non-blocking writer's
+`WorkerGuard` is held by `main()` so pending writes flush on shutdown.
+
+Resolution lives in a new `freejoyx_ui::log_dir` module (the UI is the
+only consumer of the *open-folder* side, and the app crate already
+depends on `freejoyx-ui`). `open_in_file_manager()` spawns
+`explorer` / `open` / `xdg-open` per platform.
+
+### 10e — App icon
+
+New `crates/freejoyx-ui/assets/icon.svg` — 256×256 stylised joystick
+on the dark panel + amber accent palette from `Style.MD`. Wired into
+the window via `icon: @image-url("../assets/icon.svg")`. Slint's
+femtovg renderer handles the SVG path.
+
+### 10f — Packaging
+
+- `crates/freejoyx-app/Cargo.toml` grew a `[package.metadata.bundle]`
+  block (cargo-bundle picks this up for `.msi` / `.dmg`). Identifier
+  `com.anpeaco.freejoyx-configurator`, copyright, category, short +
+  long description, icon path, macOS min version 11.0.
+- New `packaging/build-appimage.sh` — produces an x86_64 AppImage from
+  `target/release/freejoyx-app` plus the SVG icon + a hand-written
+  `.desktop` file + `AppRun` shim. Requires `appimagetool` on `$PATH`
+  on the build host.
+- New `RELEASE_NOTES.md` at the repo root, ready to paste into the
+  GitHub Release body when the maintainer cuts the v0.1.0 tag.
+
+Workspace version moved `0.1.0-pre → 0.1.0` in `Cargo.toml`. The tag
+itself isn't created here (user-driven push discipline).
+
+### 10g — Verification
+
+Five-command discipline holds:
+
+- `cargo fmt --all --check` ✓ (re-ran `cargo fmt --all` to apply one
+  import-reorder)
+- `cargo clippy --workspace --all-targets -- -D warnings` ✓ — needed
+  two trivial fixes: `#[allow(clippy::too_many_lines)]` on the now-103-
+  line `freejoyx_ui::app::run` (was already 99 lines pre-slice; the
+  five new lines spent on `set_app_version` / `set_build_rev` /
+  `set_supported_fw` / `wire_toast_callback` / `wire_log_folder_callback`
+  pushed it past 100), and an overindented bullet in the new
+  `log_dir.rs` rustdoc.
+- `cargo test --workspace` ✓ — **85 tests pass** (was 80 at end of
+  Slice 9; +5 from `firmware_version::tests`).
+- `cargo build --workspace --release` ✓
+- `cargo run -p freejoyx-app -- list` ✓ — full 6-board candidate list
+  enumerated; UI not launched live this run because the verification
+  loop fired against six devices already plugged in (one of which is on
+  the supported `0x0010` mask group). Manual unsupported-FW toast
+  verification will fall to the bench loop alongside Slice 9's
+  write-back roundtrip item.
+
+### 10h — Future-enhancement issues filed
+
+Mid-slice the maintainer asked for several UI/UX enhancement ideas to
+be captured as GitHub issues so they're not lost. Filed against
+`anpeaco/FreeJoyXConfigurator` (issue numbers in the commit body).
+Themes: Lucide-style icons for every action/state, light/dark mode
+toggle, Pins tab board-image visualisation, per-pin-type icons,
+Buttons-tab filter/hide-unused/show-by-physical-pin views, broader UI
+structure & layout review pass.
+
+These are post-v0.1 work — not relitigating any locked Port.md §9
+decision. The Pins tab board-image item in particular probably wants a
+shared SVG asset shipped alongside `freejoyx-ui/assets/`.
+
+### Notes for the v0.1.0 release loop
+
+- **Tag creation is the next step**. After merging this slice the
+  maintainer should `git tag -a v0.1.0 -m "v0.1.0 — first release"`
+  and `git push origin v0.1.0`. The configurator repo doesn't (yet)
+  have a GitHub Actions release workflow analogous to FreeJoyX's
+  `release.yml` — that's worth adding before the tag, but not blocking
+  for v0.1.0 if the maintainer wants to publish artifacts by hand.
+- **`cargo bundle`** isn't a workspace dep; install separately
+  (`cargo install cargo-bundle`) on the build host. Run as
+  `cargo bundle --release -p freejoyx-app` from the repo root.
+- **AppImage script** assumes Linux dev libs (`libudev-dev`,
+  `libusb-1.0-0-dev`) are installed; hidapi's link line needs them.
+- **No GitHub Actions release workflow yet**. Worth adding for
+  v0.1.1+. CI today only builds + tests; release publishing is
+  manual.
+- **Bench verification still pending**: read → edit (every editable
+  field across all 7 tabs) → write → read-back-byte-identical. Codec
+  is exercised end-to-end against real hardware on Pins + Axes, the
+  rest leans on fixture-driven codec tests + on-disk RON cross-trip.
+
+### What's next
+
+**v0.1.0 tag + GitHub Release publication.** Out of the autonomous
+loop's hands — push discipline. After that, post-v0.1 backlog is the
+10h issues + Slice 7/8/9 carryover items already in the session log
+(Reopen status optimism, picker drift window, char-boundary-respecting
+`pack_device_name`).
+
+---
+
 ## Update 2026-05-17 — Slice 9 (Advanced Settings + device picker) DONE
 
 Originally scoped (per Port.md §5) as just device name + VID + PID +
