@@ -3,6 +3,166 @@
 Continues the overnight session that started 2026-05-16. The previous
 entries (bootstrap + Slice 0 + Slice 0.5(a)) are below this header.
 
+## Update 2026-05-17 — Slice 7 (Buttons + Logic + Shifts & Timers) DONE
+
+Largest slice in the plan (3.5-day estimate). Picks up after Slice 6.
+Landed in three sub-steps (7a–7c) with verification at 7d.
+
+### 7a — domain::buttons (ButtonType + coexistence + setters)
+
+New module `freejoyx_core::domain::buttons` lands three pieces:
+
+- **`ButtonType` enum** — 36 variants mirroring `button_type_t` from
+  `vendored/common_types.h` byte-for-byte (Normal..DoubleTap). Includes
+  the gestures appended in v1.7.x at slots 34/35 (TAP renamed from
+  LONG_PRESS, value preserved). `from_u8` returns `None` for unknown
+  bytes so the wire codec's raw-byte storage continues to round-trip
+  garbage faithfully. `label()` matches the Qt configurator dropdown
+  entries. `all()` enumerates in wire order — used by the cycle
+  picker.
+- **`physical_assignment_blocked`** + `CoexistenceCheck` — the
+  F103_GESTURE_PLAN.md rule, expressed against `&[Button; 128]`:
+  a physical input may host slots only from
+  `{NORMAL, TAP, DOUBLE_TAP}`. Returns the offending sister slot so
+  the UI can point at where the conflict came from.
+- **Button bitfield setters** — paired with the getters from Slice 3:
+  `set_shift_modificator` (4 bits), `set_is_inverted`, `set_is_disabled`,
+  `set_op` (3 bits), `set_delay_timer` (3 bits), `set_press_timer`
+  (3 bits). Truncate-on-oversize so a runaway UI never spills into a
+  neighbouring field.
+
+`BUTTON_TYPE_LOGIC = 33` re-exported from this module too so the
+buttons-tab glue doesn't need to know `domain::logic` exists.
+
+Eleven unit tests anchor this module: enum round-trip, unknown-value
+handling, gesture-compatible spec, four coexistence scenarios, two
+setter scenarios (round-trip + truncate-oversize).
+
+### 7b — Slint UI: ButtonsTab + ShiftsTimersTab
+
+`ui/app.slint` grows three new structs (`ButtonRow`, `ShiftSlot`,
+`TimerField`) and two new tab components:
+
+- **`ButtonsTab`** — scrollable list of 128 rows. Each row's top half:
+  slot number, physical-input `NumberCell`, type `CycleCell` (140 px
+  wide for the long Toggle Switch Off label), shift `CycleCell` (0-8),
+  Inverted / Disabled `CheckCell`s, and two `LiveDot`s (amber =
+  physical pressed, green = logical state). When `is-logic` is true a
+  second row appears with op cycle, Source B `NumberCell`, debounce
+  timer cycle, and a validator badge driven by
+  `validate_logic_buttons`.
+- **`ShiftsTimersTab`** — 8 shift-slot rows (each a button-index
+  `NumberCell` with -1 = unused) followed by 6 timer rows: Button
+  Timer 1/2/3, Button Debounce, Tap cutoff, Double-tap window. Each
+  timer row carries a `hint` cell with the user-friendly explanation
+  (the Qt configurator has these as tooltips; here they sit inline
+  to save a hover round-trip).
+
+Both new tabs use the existing `CheckCell` / `NumberCell` /
+`CycleCell` primitives from Slice 6. The Buttons tab `Flickable`
+sizes its viewport for the worst case (every row LOGIC = 72 px) so
+the scrollbar math is stable as rows flip between 38 and 72 px.
+
+Twelve new callbacks bubble up through `AppWindow`:
+button-physical-edited / type-cycled / shift-cycled / inverted-toggled
+/ disabled-toggled / src-b-edited / op-cycled / debounce-cycled +
+shift-edited + timer-edited.
+
+The Buttons + Logic and Shifts & Timers tab buttons are now enabled.
+
+### 7c — app glue: separate `crate::buttons` module
+
+The bulk of Slice 7's Rust glue lands in a new `crates/freejoyx-ui/
+src/buttons.rs` rather than `app.rs`, so `app::run` stayed under the
+clippy `too_many_lines` cap. The new module owns:
+
+- `refresh_button_model` / `refresh_button_row` — wholesale-or-per-row
+  rebuild from `DeviceConfig.buttons`, with the LOGIC validator
+  pre-computed once per refresh.
+- `refresh_shift_model` / `refresh_timer_model` — same pattern for
+  the Shifts & Timers tab. `TIMER_FIELDS` is a const table of
+  `(label, hint)` pairs that drives both the model and
+  `set_timer_value` index-→-field dispatch.
+- `next_compatible_type` — `(physical_num, current_type)` → next
+  ButtonType that passes `physical_assignment_blocked`. Wraps after
+  36 steps so cycle-on-blocked rows still rotate.
+- `wire_callbacks` — wires all 10 button + shift + timer Slint
+  callbacks. The type-cycle one consults the coexistence rule; every
+  other callback funnels through `with_button_slot` /
+  `mark_dirty`.
+
+`app.rs`:
+- `State` made `pub(crate)` so the new module can take `&mut last_config`
+  via `RefCell::borrow_mut`.
+- `pump_events` now refreshes button + shift + timer models on
+  `ConfigReceived` and the button model on `ParamsTick` (live press
+  state).
+- Load callback refreshes all five models (pin / axis / button /
+  shift / timer) — file-loaded configs surface live across every
+  tab without a Read Device round-trip.
+- New `EventSinks<'a>` bundle passed to `pump_events` so the timer
+  closure doesn't accumulate a parameter per slice.
+
+### 7d — verification
+
+Five-command discipline holds:
+
+- `cargo fmt --all --check` ✓
+- `cargo clippy --workspace --all-targets -- -D warnings` ✓
+- `cargo test --workspace` ✓ — **73 tests pass** (was 62 at end of
+  Slice 6; +11 from `domain::buttons`)
+- `cargo build --workspace --release` ✓
+- `cargo run -p freejoyx-app -- list` + `ui` smoke ✓ — window came
+  up, worker connected.
+
+### Notes for downstream slices
+
+- **128-row Flickable viewport math is conservative.** Pre-computed
+  as `len × 72 px` (worst case, every row LOGIC). When most rows
+  aren't LOGIC there's empty scroll space at the bottom. A future
+  polish item is to recompute viewport-height as a running sum.
+- **Live-state refresh on `ParamsTick` rebuilds every button row**,
+  not just rows whose bit changed. 128 set_row_data calls × 20 Hz =
+  2560/s, fine on the dev machine but the next slice that adds
+  per-slot wiring (encoder live-state in Slice 8?) should profile
+  before piling on.
+- **The type-cycle picker still skips blocked variants**, which can
+  feel surprising when the user expects a particular advancement
+  order. A real popup combobox with greyed-out blocked entries is
+  cleaner UX — same trade-off flagged in Slice 6's Notes. Slice 10
+  polish is the right time.
+- **Coexistence rule only enforces the gesture set**, not other
+  cross-slot rules from `F103_LOGIC_PLAN.md` (e.g. a LOGIC slot
+  referencing a disabled physical slot). LOGIC's `validate_logic_buttons`
+  catches the "Source unset" cases; expressing the firmware's
+  actual evaluation semantics is intentionally out of scope per
+  Port.md §9 (firmware evaluates, configurator only checks
+  completeness).
+- **A2B debounce (`a2b_debounce_ms`) is unedited**. The wire codec
+  round-trips it; the Shifts & Timers tab v0.1 surfaces six fields,
+  not seven, to avoid clutter for a field most users won't touch.
+  Trivial to add when someone asks.
+- **`encoder_press_time_ms` / `exchange_period_ms`** also unedited
+  for the same reason. Encoder timing belongs on the Encoders tab
+  (Slice 8); exchange period is firmware-internal pacing.
+- **Bench verification of LOGIC + gesture buttons still pending.**
+  Read → make a LOGIC slot → Write → read-back-byte-identical is the
+  trip that proves the new setters wire through. Same for setting up
+  TAP + DOUBLE_TAP on a shared physical and confirming the
+  coexistence rule is mirrored on the firmware side.
+
+### What's next
+
+Per Port.md §5: **Slice 8 — Encoders + Shift Registers.** 16 soft
+encoders + 2 fast encoders (`MAX_FAST_ENCODER_NUM = 2` per Port.md
+§9). Pin pickers per encoder + the 1x/2x/4x speed picker. 4 shift
+registers (HC165 / CD4021) with chain length + channel mapping.
+
+Then Slice 9 (Advanced Settings — name / VID / PID), then Slice 10
+(polish + v0.1 release).
+
+---
+
 ## Update 2026-05-17 — Slice 6 (Axes tab, linear) DONE
 
 Picks up after Slice 3. Per Port.md §5 Slice 6's surface area is
