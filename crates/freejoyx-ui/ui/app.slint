@@ -31,10 +31,28 @@ export global Palette {
     out property <color> bg-warn: dark ? #4a3a1a : #fbe9bf;
 }
 
+// --- Lucide icon wrapper ------------------------------------------------
+//
+// A Lucide SVG re-tinted with the palette accent / text colour. The
+// SVG ships with `stroke="#000"` so the femtovg-rasterised texture has
+// alpha-correct strokes; `colorize` then multiplies the texture by
+// `tint`. Default size 14 px matches the v0.1 toolbar's 13 px text.
+component LucideIcon inherits Image {
+    in property <length> size: 14px;
+    in property <color> tint: Palette.text;
+    width: root.size;
+    height: root.size;
+    colorize: root.tint;
+    image-fit: contain;
+    accessible-role: none;
+}
+
 // --- Reusable controls --------------------------------------------------
 component PillButton inherits Rectangle {
     in property <string> label;
     in property <bool> enabled: true;
+    in property <image> icon-source;
+    in property <bool> show-chevron: false;
     callback clicked();
 
     height: 30px;
@@ -49,11 +67,25 @@ component PillButton inherits Rectangle {
         alignment: center;
         padding-left: 12px;
         padding-right: 12px;
+        spacing: 6px;
+        LucideIcon {
+            source: root.icon-source;
+            tint: Palette.text;
+            visible: root.icon-source.width > 0;
+            y: (parent.height - self.height) / 2;
+        }
         Text {
             text: root.label;
             color: Palette.text;
             font-size: 13px;
             vertical-alignment: center;
+        }
+        LucideIcon {
+            source: @image-url("../assets/icons/chevron-down.svg");
+            tint: Palette.text-dim;
+            size: 12px;
+            visible: root.show-chevron;
+            y: (parent.height - self.height) / 2;
         }
     }
 
@@ -76,6 +108,7 @@ component TabButton inherits Rectangle {
     in property <string> label;
     in property <bool> selected: false;
     in property <bool> enabled: true;
+    in property <image> icon-source;
     callback clicked();
 
     height: 36px;
@@ -87,8 +120,16 @@ component TabButton inherits Rectangle {
 
     HorizontalLayout {
         alignment: center;
-        padding-left: 16px;
-        padding-right: 16px;
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 6px;
+        LucideIcon {
+            source: root.icon-source;
+            tint: root.selected ? Palette.accent : Palette.text;
+            size: 14px;
+            visible: root.icon-source.width > 0;
+            y: (parent.height - self.height) / 2;
+        }
         Text {
             text: root.label;
             color: root.selected ? Palette.accent : Palette.text;
@@ -185,8 +226,16 @@ component PinRowView inherits Rectangle {
             background: Palette.error;
             border-radius: 3px;
             HorizontalLayout {
-                padding-left: 8px;
+                padding-left: 6px;
                 padding-right: 8px;
+                spacing: 4px;
+                alignment: center;
+                LucideIcon {
+                    source: @image-url("../assets/icons/alert-octagon.svg");
+                    tint: #ffffff;
+                    size: 12px;
+                    y: (parent.height - self.height) / 2;
+                }
                 Text {
                     text: root.entry.conflict-msg;
                     color: #ffffff;
@@ -1377,17 +1426,17 @@ component ToastBanner inherits Rectangle {
         padding-left: 12px;
         padding-right: 8px;
         spacing: 10px;
-        Text {
-            text:
-                root.severity == 3 ? "⚠"
-                : root.severity == 2 ? "⚠"
-                : "ⓘ";
-            color:
+        LucideIcon {
+            source:
+                root.severity == 3 ? @image-url("../assets/icons/circle-alert.svg")
+                : root.severity == 2 ? @image-url("../assets/icons/triangle-alert.svg")
+                : @image-url("../assets/icons/info.svg");
+            tint:
                 root.severity == 3 ? Palette.error
                 : root.severity == 2 ? Palette.accent
                 : Palette.text-dim;
-            font-size: 14px;
-            vertical-alignment: center;
+            size: 16px;
+            y: (parent.height - self.height) / 2;
         }
         Text {
             text: root.message;
@@ -1403,12 +1452,12 @@ component ToastBanner inherits Rectangle {
             y: (parent.height - self.height) / 2;
             background: dismiss-ta.has-hover ? Palette.bg-cell-hover : transparent;
             border-radius: 3px;
-            Text {
-                text: "✕";
-                color: Palette.text-dim;
-                font-size: 12px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            LucideIcon {
+                source: @image-url("../assets/icons/x.svg");
+                tint: Palette.text-dim;
+                size: 12px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
             }
             dismiss-ta := TouchArea {
                 clicked => { root.dismissed(); }
@@ -1504,9 +1553,15 @@ component Toolbar inherits Rectangle {
     HorizontalLayout {
         padding-left: 14px;
         padding-right: 14px;
-        spacing: 14px;
+        spacing: 12px;
         StatusDot {
             connected: root.connected;
+            y: (parent.height - self.height) / 2;
+        }
+        LucideIcon {
+            source: @image-url("../assets/icons/usb.svg");
+            tint: root.connected ? Palette.success : Palette.text-dim;
+            size: 16px;
             y: (parent.height - self.height) / 2;
         }
         VerticalLayout {
@@ -1523,7 +1578,9 @@ component Toolbar inherits Rectangle {
             }
         }
         PillButton {
-            label: "Devices ▾";
+            label: "Devices";
+            icon-source: @image-url("../assets/icons/cpu.svg");
+            show-chevron: true;
             enabled: true;
             clicked => {
                 root.refresh-devices();
@@ -1566,26 +1623,32 @@ component Toolbar inherits Rectangle {
         Rectangle { horizontal-stretch: 1; }
         PillButton {
             label: "Load File…";
+            icon-source: @image-url("../assets/icons/folder-open.svg");
             enabled: true;
             clicked => { root.load-clicked(); }
         }
         PillButton {
             label: "Save File…";
+            icon-source: @image-url("../assets/icons/save.svg");
             enabled: root.can-save;
             clicked => { root.save-clicked(); }
         }
         PillButton {
             label: "Read Device";
+            icon-source: @image-url("../assets/icons/download.svg");
             enabled: root.can-read;
             clicked => { root.read-clicked(); }
         }
         PillButton {
             label: "Write Device";
+            icon-source: @image-url("../assets/icons/upload.svg");
             enabled: root.can-write;
             clicked => { root.write-clicked(); }
         }
         PillButton {
-            label: "Help ▾";
+            label: "Help";
+            icon-source: @image-url("../assets/icons/help-circle.svg");
+            show-chevron: true;
             enabled: true;
             clicked => {
                 help-popup.show();
@@ -1609,6 +1672,14 @@ component Toolbar inherits Rectangle {
                             border-radius: 3px;
                             HorizontalLayout {
                                 padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                LucideIcon {
+                                    source: @image-url("../assets/icons/help-circle.svg");
+                                    tint: Palette.text-dim;
+                                    size: 14px;
+                                    y: (parent.height - self.height) / 2;
+                                }
                                 Text {
                                     text: "About FreeJoyXConfigurator";
                                     color: Palette.text;
@@ -1629,6 +1700,14 @@ component Toolbar inherits Rectangle {
                             border-radius: 3px;
                             HorizontalLayout {
                                 padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                LucideIcon {
+                                    source: @image-url("../assets/icons/folder.svg");
+                                    tint: Palette.text-dim;
+                                    size: 14px;
+                                    y: (parent.height - self.height) / 2;
+                                }
                                 Text {
                                     text: "Open Log Folder";
                                     color: Palette.text;
@@ -1649,6 +1728,16 @@ component Toolbar inherits Rectangle {
                             border-radius: 3px;
                             HorizontalLayout {
                                 padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                LucideIcon {
+                                    source: Palette.dark
+                                        ? @image-url("../assets/icons/sun.svg")
+                                        : @image-url("../assets/icons/moon.svg");
+                                    tint: Palette.text-dim;
+                                    size: 14px;
+                                    y: (parent.height - self.height) / 2;
+                                }
                                 Text {
                                     text: Palette.dark ? "Switch to Light Mode" : "Switch to Dark Mode";
                                     color: Palette.text;
@@ -1783,36 +1872,43 @@ export component AppWindow inherits Window {
                 spacing: 4px;
                 TabButton {
                     label: "Pins";
+                    icon-source: @image-url("../assets/icons/pin.svg");
                     selected: root.active-tab == 0;
                     clicked => { root.active-tab = 0; }
                 }
                 TabButton {
                     label: "Axes";
+                    icon-source: @image-url("../assets/icons/sliders-horizontal.svg");
                     selected: root.active-tab == 1;
                     clicked => { root.active-tab = 1; }
                 }
                 TabButton {
                     label: "Buttons + Logic";
+                    icon-source: @image-url("../assets/icons/square-mouse-pointer.svg");
                     selected: root.active-tab == 2;
                     clicked => { root.active-tab = 2; }
                 }
                 TabButton {
                     label: "Shifts & Timers";
+                    icon-source: @image-url("../assets/icons/timer.svg");
                     selected: root.active-tab == 3;
                     clicked => { root.active-tab = 3; }
                 }
                 TabButton {
                     label: "Encoders";
+                    icon-source: @image-url("../assets/icons/rotate-cw.svg");
                     selected: root.active-tab == 4;
                     clicked => { root.active-tab = 4; }
                 }
                 TabButton {
                     label: "Shift Registers";
+                    icon-source: @image-url("../assets/icons/layers.svg");
                     selected: root.active-tab == 5;
                     clicked => { root.active-tab = 5; }
                 }
                 TabButton {
                     label: "Advanced";
+                    icon-source: @image-url("../assets/icons/settings.svg");
                     selected: root.active-tab == 6;
                     clicked => { root.active-tab = 6; }
                 }
