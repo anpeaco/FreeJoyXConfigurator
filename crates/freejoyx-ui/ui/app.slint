@@ -183,9 +183,176 @@ component PinFamilyIcon inherits LucideIcon {
         @image-url("../assets/icons/circle-dashed.svg");
 }
 
+// One entry in an inline dropdown list. Used across every tab — the
+// Buttons-tab Type / Shift / LOGIC Op / LOGIC Debounce columns, the
+// Axes filter / resolution / channel cells, the Encoders mode cells,
+// the Shift Registers type cell, and the Pins Function cell.
+//
+// Header rows (`is-header: true`) render as non-clickable category
+// labels — only the grouped pickers (Type column, Pin Function) emit
+// them. Flat lists set `is-header: false` on every row.
+//
+// `blocked` greys the entry and shows `blocked-reason` inline (only
+// used by the Buttons-tab Type column today; other pickers leave
+// `blocked: false` on every entry).
+struct DropdownEntry {
+    is-header: bool,
+    label: string,
+    value: int,
+    blocked: bool,
+    blocked-reason: string,
+}
+
+// Inline dropdown cell — chevron pill that opens an anchored
+// `PopupWindow` of [`DropdownEntry`] rows. Used by every Type / Shift /
+// Op / Debounce / Filter / Mode picker across the configurator (issue
+// #15). Replaces the old `CycleCell` step-cycle pattern *and* the
+// `TypePickerOverlay` modal so picking from a finite list is one click
+// to open + one click to apply, with the popup anchored under the cell.
+//
+// Properties:
+//
+// - `entries` — list of rows in display order. Category-grouped
+//   pickers (Buttons Type column, Pins Function) emit `is-header: true`
+//   rows between groups; flat pickers leave it false on every entry.
+// - `current-value` — highlight the row whose `value` matches. Pass
+//   `-1` to suppress the highlight (e.g. when nothing is selected yet).
+// - `popup-width` / `popup-max-height` — popup geometry. Width
+//   defaults to the cell width; height caps at 320 px and scrolls past.
+// - `opening` callback — runs right before the popup shows. Use it to
+//   refresh the entries model with current context (the Buttons Type
+//   column populates blocked-info per the row's `physical_num`).
+// - `picked(int)` callback — emits the chosen entry's `value`.
+component DropdownCell inherits Rectangle {
+    in property <string> value-label;
+    in property <length> value-width: 100px;
+    in property <bool> compact: false;
+    in property <[DropdownEntry]> entries;
+    in property <int> current-value: -1;
+    in property <length> popup-width: 0px;
+    in property <length> popup-max-height: 320px;
+    callback opening();
+    callback picked(int /* value */);
+
+    height: 26px;
+
+    Rectangle {
+        width: root.value-width;
+        height: 22px;
+        background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 3px;
+        x: 0;
+        y: (parent.height - self.height) / 2;
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 6px;
+            spacing: 4px;
+            alignment: start;
+            Text {
+                text: root.value-label;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            LucideIcon {
+                source: @image-url("../assets/icons/chevron-down.svg");
+                tint: Palette.text-dim;
+                size: 10px;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        ta := TouchArea {
+            clicked => {
+                root.opening();
+                popup.show();
+            }
+        }
+
+        popup := PopupWindow {
+            x: 0;
+            y: parent.height + 2px;
+            width: root.popup-width > 0px ? root.popup-width : root.value-width;
+            close-policy: close-on-click-outside;
+
+            Rectangle {
+                background: Palette.bg-panel;
+                border-color: Palette.border;
+                border-width: 1px;
+                border-radius: 4px;
+                // Cap at popup-max-height; entries past the cap scroll.
+                height: min(root.popup-max-height, root.entries.length * 22px + 12px);
+
+                Flickable {
+                    width: parent.width;
+                    height: parent.height;
+                    viewport-height: root.entries.length * 22px + 12px;
+
+                    VerticalLayout {
+                        padding: 4px;
+                        spacing: 1px;
+                        for entry[i] in root.entries: Rectangle {
+                            height: entry.is-header ? 18px : 22px;
+                            property <bool> is-current:
+                                !entry.is-header && entry.value == root.current-value;
+                            background: entry.is-header
+                                ? transparent
+                                : (entry-ta.has-hover && !entry.blocked
+                                    ? Palette.bg-cell-hover
+                                    : (is-current ? Palette.bg-cell-alt : transparent));
+                            border-color: is-current ? Palette.accent : transparent;
+                            border-width: is-current ? 1px : 0px;
+                            border-radius: 3px;
+
+                            HorizontalLayout {
+                                padding-left: entry.is-header ? 4px : 14px;
+                                padding-right: 6px;
+                                spacing: 4px;
+                                alignment: start;
+                                Text {
+                                    text: entry.label;
+                                    color: entry.is-header
+                                        ? Palette.text-dim
+                                        : (entry.blocked
+                                            ? Palette.text-dim
+                                            : (is-current ? Palette.accent : Palette.text));
+                                    font-size: entry.is-header ? 10px : 12px;
+                                    font-weight: entry.is-header ? 600 : 400;
+                                    letter-spacing: entry.is-header ? 0.5px : 0px;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                if !entry.is-header && entry.blocked: Text {
+                                    text: entry.blocked-reason;
+                                    color: Palette.text-dim;
+                                    font-size: 10px;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            entry-ta := TouchArea {
+                                enabled: !entry.is-header && !entry.blocked;
+                                clicked => {
+                                    root.picked(entry.value);
+                                    popup.close();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 component PinRowView inherits Rectangle {
     in property <PinRow> entry;
-    in property <[string]> function-labels;
+    in property <[DropdownEntry]> function-entries;
     in property <int> slot;
     in property <bool> selected: false;
     callback function-picked(int /* slot */, int /* new function index */);
@@ -214,45 +381,24 @@ component PinRowView inherits Rectangle {
             vertical-alignment: center;
         }
 
-        // Function picker — Slint's ComboBox lives in std-widgets;
-        // re-import not needed since we use the global one if available.
-        // For Slint 1.13 we use a plain combo via a TouchArea + Popup.
-        // To keep this slice's surface area tight, we render the label
-        // and use a click to advance through functions; the maintainer
-        // can later swap in std-widgets ComboBox if desired.
-        Rectangle {
-            min-width: 240px;
-            height: 28px;
-            background: cycle-ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
-            border-color: Palette.border;
-            border-width: 1px;
-            border-radius: 3px;
-            vertical-stretch: 0;
-
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 10px;
-                spacing: 6px;
-                PinFamilyIcon {
-                    family: root.entry.function-family;
-                    tint: root.entry.function-family == 0 ? Palette.text-dim : Palette.accent;
-                    y: (parent.height - self.height) / 2;
-                }
-                Text {
-                    text: root.entry.function-label;
-                    color: Palette.text;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
+        // Family icon + inline-dropdown function picker (issue #15).
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            PinFamilyIcon {
+                family: root.entry.function-family;
+                tint: root.entry.function-family == 0 ? Palette.text-dim : Palette.accent;
+                y: (parent.height - self.height) / 2;
             }
-
-            cycle-ta := TouchArea {
-                clicked => {
-                    // Advance to next function — quick demo
-                    // interaction without bringing in a full popup.
-                    // Slice 5+ polish replaces with proper combobox.
-                    root.function-picked(root.slot, mod(root.entry.function-index + 1, root.function-labels.length));
-                }
+            DropdownCell {
+                compact: true;
+                value-label: root.entry.function-label;
+                value-width: 240px;
+                entries: root.function-entries;
+                current-value: root.entry.function-index;
+                popup-width: 280px;
+                popup-max-height: 360px;
+                picked(v) => { root.function-picked(root.slot, v); }
             }
         }
 
@@ -400,7 +546,7 @@ component PinBoardView inherits Rectangle {
 // --- Pins tab body ------------------------------------------------------
 component PinsTab inherits Rectangle {
     in property <[PinRow]> pins;
-    in property <[string]> function-labels;
+    in property <[DropdownEntry]> function-entries;
     in-out property <int> highlighted-slot: -1;
     callback pin-changed(int /* slot */, int /* function index */);
 
@@ -417,7 +563,7 @@ component PinsTab inherits Rectangle {
             font-weight: 600;
         }
         Text {
-            text: "Left list maps each physical chip pin to a function — tap the function cell to cycle. Right is a schematic board view: click a chip to highlight the matching row. Pins in conflict (singleton roles claimed twice) get a red outline.";
+            text: "Left list maps each physical chip pin to a function — click the function cell to pick from a grouped dropdown. Right is a schematic board view: click a chip to highlight the matching row. Pins in conflict (singleton roles claimed twice) get a red outline.";
             color: Palette.text-dim;
             font-size: 11px;
             wrap: word-wrap;
@@ -435,7 +581,7 @@ component PinsTab inherits Rectangle {
                     for pin-data[i] in root.pins: PinRowView {
                         entry: pin-data;
                         slot: i;
-                        function-labels: root.function-labels;
+                        function-entries: root.function-entries;
                         selected: root.highlighted-slot == i;
                         function-picked(slot, fn) => { root.pin-changed(slot, fn); }
                         row-clicked => { root.highlighted-slot = i; }
@@ -572,66 +718,23 @@ component NumberCell inherits Rectangle {
     }
 }
 
-component CycleCell inherits Rectangle {
-    in property <string> label;
-    in property <string> value-label;
-    in property <length> value-width: 100px;
-    /// When set, drop the leading label and let the value pill fill
-    /// the cell — for table layouts where the column header carries
-    /// the label.
-    in property <bool> compact: false;
-    callback cycled();
-
-    height: 26px;
-
-    HorizontalLayout {
-        spacing: 4px;
-        alignment: start;
-        if !root.compact: Text {
-            text: root.label;
-            color: Palette.text-dim;
-            font-size: 11px;
-            vertical-alignment: center;
-        }
-        Rectangle {
-            width: root.value-width;
-            height: 22px;
-            background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
-            border-color: Palette.border;
-            border-width: 1px;
-            border-radius: 3px;
-            y: (parent.height - self.height) / 2;
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                Text {
-                    text: root.value-label;
-                    color: Palette.text;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
-            }
-            ta := TouchArea {
-                clicked => { root.cycled(); }
-            }
-        }
-    }
-}
-
 component AxisRowView inherits Rectangle {
     in property <AxisRow> entry;
     in property <int> slot;
+    in property <[DropdownEntry]> filter-entries;
+    in property <[DropdownEntry]> resolution-entries;
+    in property <[DropdownEntry]> channel-entries;
     callback out-toggled(int);
     callback inverted-toggled(int);
     callback centered-toggled(int);
     callback calib-min-edited(int, int);
     callback calib-center-edited(int, int);
     callback calib-max-edited(int, int);
-    callback filter-cycled(int);
+    callback filter-picked(int /* slot */, int /* value */);
     callback deadband-edited(int, int);
     callback dyn-deadband-toggled(int);
-    callback resolution-cycled(int);
-    callback channel-cycled(int);
+    callback resolution-picked(int /* slot */, int /* value */);
+    callback channel-picked(int /* slot */, int /* value */);
 
     height: 110px;
     background: Palette.bg-cell;
@@ -698,11 +801,24 @@ component AxisRowView inherits Rectangle {
                 field-width: 60px;
                 edited(v) => { root.calib-max-edited(root.slot, v); }
             }
-            CycleCell {
-                label: "filter";
-                value-label: root.entry.filter-label;
-                value-width: 76px;
-                cycled => { root.filter-cycled(root.slot); }
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                Text {
+                    text: "filter";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                DropdownCell {
+                    compact: true;
+                    value-label: root.entry.filter-label;
+                    value-width: 76px;
+                    entries: root.filter-entries;
+                    current-value: root.entry.filter-index;
+                    popup-width: 120px;
+                    picked(v) => { root.filter-picked(root.slot, v); }
+                }
             }
             NumberCell {
                 label: "dead";
@@ -715,17 +831,43 @@ component AxisRowView inherits Rectangle {
                 checked: root.entry.is-dynamic-deadband;
                 toggled => { root.dyn-deadband-toggled(root.slot); }
             }
-            CycleCell {
-                label: "res";
-                value-label: root.entry.resolution;
-                value-width: 36px;
-                cycled => { root.resolution-cycled(root.slot); }
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                Text {
+                    text: "res";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                DropdownCell {
+                    compact: true;
+                    value-label: root.entry.resolution;
+                    value-width: 36px;
+                    entries: root.resolution-entries;
+                    current-value: root.entry.resolution;
+                    popup-width: 64px;
+                    picked(v) => { root.resolution-picked(root.slot, v); }
+                }
             }
-            CycleCell {
-                label: "ch";
-                value-label: root.entry.channel;
-                value-width: 36px;
-                cycled => { root.channel-cycled(root.slot); }
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                Text {
+                    text: "ch";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                DropdownCell {
+                    compact: true;
+                    value-label: root.entry.channel;
+                    value-width: 36px;
+                    entries: root.channel-entries;
+                    current-value: root.entry.channel;
+                    popup-width: 64px;
+                    picked(v) => { root.channel-picked(root.slot, v); }
+                }
             }
             Rectangle { horizontal-stretch: 1; }
         }
@@ -734,17 +876,20 @@ component AxisRowView inherits Rectangle {
 
 component AxesTab inherits Rectangle {
     in property <[AxisRow]> axes;
+    in property <[DropdownEntry]> filter-entries;
+    in property <[DropdownEntry]> resolution-entries;
+    in property <[DropdownEntry]> channel-entries;
     callback out-toggled(int);
     callback inverted-toggled(int);
     callback centered-toggled(int);
     callback calib-min-edited(int, int);
     callback calib-center-edited(int, int);
     callback calib-max-edited(int, int);
-    callback filter-cycled(int);
+    callback filter-picked(int /* slot */, int /* value */);
     callback deadband-edited(int, int);
     callback dyn-deadband-toggled(int);
-    callback resolution-cycled(int);
-    callback channel-cycled(int);
+    callback resolution-picked(int /* slot */, int /* value */);
+    callback channel-picked(int /* slot */, int /* value */);
 
     background: Palette.bg-panel;
 
@@ -772,17 +917,20 @@ component AxesTab inherits Rectangle {
                 for axis-data[i] in root.axes: AxisRowView {
                     entry: axis-data;
                     slot: i;
+                    filter-entries: root.filter-entries;
+                    resolution-entries: root.resolution-entries;
+                    channel-entries: root.channel-entries;
                     out-toggled(s) => { root.out-toggled(s); }
                     inverted-toggled(s) => { root.inverted-toggled(s); }
                     centered-toggled(s) => { root.centered-toggled(s); }
                     calib-min-edited(s, v) => { root.calib-min-edited(s, v); }
                     calib-center-edited(s, v) => { root.calib-center-edited(s, v); }
                     calib-max-edited(s, v) => { root.calib-max-edited(s, v); }
-                    filter-cycled(s) => { root.filter-cycled(s); }
+                    filter-picked(s, v) => { root.filter-picked(s, v); }
                     deadband-edited(s, v) => { root.deadband-edited(s, v); }
                     dyn-deadband-toggled(s) => { root.dyn-deadband-toggled(s); }
-                    resolution-cycled(s) => { root.resolution-cycled(s); }
-                    channel-cycled(s) => { root.channel-cycled(s); }
+                    resolution-picked(s, v) => { root.resolution-picked(s, v); }
+                    channel-picked(s, v) => { root.channel-picked(s, v); }
                 }
             }
         }
@@ -824,24 +972,6 @@ struct ButtonRow {
     log-pressed: bool,
 }
 
-// One row in the category-grouped button-type picker. Headers
-// (`is-header: true`) carry only `label`; entries carry `label` and
-// `type-index` (the wire byte). Built once on the Rust side from
-// `ButtonTypeCategory::entries()`.
-struct TypePickerEntry {
-    is-header: bool,
-    label: string,
-    type-index: int,
-}
-
-// Per-slot blocked-ness for each entry — kept as a separate flat list
-// because Slint structs can't nest array fields. Length matches the
-// entries model (so header rows carry `blocked: false`, ignored).
-struct TypeBlockedInfo {
-    blocked: bool,
-    reason: string,
-}
-
 component LiveDot inherits Rectangle {
     in property <bool> on;
     in property <color> on-color: Palette.accent;
@@ -872,50 +1002,6 @@ export global BtnCols {
     out property <length> w-debounce: 76px;
 }
 
-// Button-type opener cell — same visual mass as a `CycleCell`-in-compact
-// mode, but a click opens the category-grouped picker rather than
-// stepping the cycle.
-component TypePickerCell inherits Rectangle {
-    in property <string> value-label;
-    in property <length> value-width: 100px;
-    callback opened();
-
-    height: 26px;
-
-    Rectangle {
-        width: root.value-width;
-        height: 22px;
-        background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
-        border-color: Palette.border;
-        border-width: 1px;
-        border-radius: 3px;
-        x: 0;
-        y: (parent.height - self.height) / 2;
-        HorizontalLayout {
-            padding-left: 8px;
-            padding-right: 6px;
-            spacing: 4px;
-            alignment: start;
-            Text {
-                text: root.value-label;
-                color: Palette.text;
-                font-size: 12px;
-                vertical-alignment: center;
-            }
-            Rectangle { horizontal-stretch: 1; }
-            LucideIcon {
-                source: @image-url("../assets/icons/chevron-down.svg");
-                tint: Palette.text-dim;
-                size: 10px;
-                y: (parent.height - self.height) / 2;
-            }
-        }
-        ta := TouchArea {
-            clicked => { root.opened(); }
-        }
-    }
-}
-
 component HeaderCell inherits Rectangle {
     in property <string> text;
     in property <length> col-width: 32px;
@@ -936,14 +1022,19 @@ component HeaderCell inherits Rectangle {
 component ButtonRowView inherits Rectangle {
     in property <ButtonRow> entry;
     in property <int> slot;
+    in property <[DropdownEntry]> type-entries;
+    in property <[DropdownEntry]> shift-entries;
+    in property <[DropdownEntry]> op-entries;
+    in property <[DropdownEntry]> debounce-entries;
     callback physical-edited(int /* slot */, int /* new value */);
-    callback type-picker-opened(int);
-    callback shift-cycled(int);
+    callback type-opening(int /* slot */);
+    callback type-picked(int /* slot */, int /* value */);
+    callback shift-picked(int /* slot */, int /* value */);
     callback inverted-toggled(int);
     callback disabled-toggled(int);
     callback src-b-edited(int, int);
-    callback op-cycled(int);
-    callback debounce-cycled(int);
+    callback op-picked(int /* slot */, int /* value */);
+    callback debounce-picked(int /* slot */, int /* value */);
 
     height: root.entry.is-logic ? 70px : 36px;
     background: Palette.bg-cell;
@@ -972,16 +1063,24 @@ component ButtonRowView inherits Rectangle {
                 field-width: BtnCols.w-phy;
                 edited(v) => { root.physical-edited(root.slot, v); }
             }
-            TypePickerCell {
+            DropdownCell {
                 value-label: root.entry.type-label;
                 value-width: BtnCols.w-type;
-                opened => { root.type-picker-opened(root.slot); }
+                entries: root.type-entries;
+                current-value: root.entry.type-index;
+                popup-width: 260px;
+                opening => { root.type-opening(root.slot); }
+                picked(v) => { root.type-picked(root.slot, v); }
             }
-            CycleCell {
+            DropdownCell {
                 compact: true;
-                value-label: root.entry.shift-modificator;
+                value-label: root.entry.shift-modificator == 0
+                    ? "—" : root.entry.shift-modificator;
                 value-width: BtnCols.w-shift;
-                cycled => { root.shift-cycled(root.slot); }
+                entries: root.shift-entries;
+                current-value: root.entry.shift-modificator;
+                popup-width: 96px;
+                picked(v) => { root.shift-picked(root.slot, v); }
             }
             CheckCell {
                 compact: true;
@@ -1015,11 +1114,14 @@ component ButtonRowView inherits Rectangle {
             alignment: start;
             // Offset under the Type column.
             Rectangle { width: BtnCols.w-num + BtnCols.spacing + BtnCols.w-phy; }
-            CycleCell {
+            DropdownCell {
                 compact: true;
                 value-label: root.entry.op-label;
                 value-width: BtnCols.w-op;
-                cycled => { root.op-cycled(root.slot); }
+                entries: root.op-entries;
+                current-value: root.entry.op-index;
+                popup-width: 160px;
+                picked(v) => { root.op-picked(root.slot, v); }
             }
             NumberCell {
                 compact: true;
@@ -1027,11 +1129,14 @@ component ButtonRowView inherits Rectangle {
                 field-width: BtnCols.w-srcb;
                 edited(v) => { root.src-b-edited(root.slot, v); }
             }
-            CycleCell {
+            DropdownCell {
                 compact: true;
                 value-label: root.entry.debounce-label;
                 value-width: BtnCols.w-debounce;
-                cycled => { root.debounce-cycled(root.slot); }
+                entries: root.debounce-entries;
+                current-value: root.entry.debounce-index;
+                popup-width: 120px;
+                picked(v) => { root.debounce-picked(root.slot, v); }
             }
             Rectangle {
                 visible: root.entry.logic-error != "";
@@ -1089,6 +1194,13 @@ component ButtonsHeaderRow inherits Rectangle {
 
 component ButtonsTab inherits Rectangle {
     in property <[ButtonRow]> buttons;
+    // Dropdown entries (issue #15) — shared across all 128 rows.
+    in property <[DropdownEntry]> type-entries;
+    in property <[DropdownEntry]> shift-entries;
+    in property <[DropdownEntry]> op-entries;
+    in property <[DropdownEntry]> debounce-entries;
+    in property <[DropdownEntry]> filter-category-entries;
+    in property <int> filter-category-value;
     // Filter state (issue #5) — passed from AppWindow so the Rust side
     // can mutate freely and the strip below reflects the truth.
     in property <bool> hide-unused;
@@ -1096,17 +1208,18 @@ component ButtonsTab inherits Rectangle {
     in property <string> filter-category-label;  // "All" when not filtering
     in property <int> visible-count;
     callback physical-edited(int, int);
-    callback type-picker-opened(int);
-    callback shift-cycled(int);
+    callback type-opening(int /* slot */);
+    callback type-picked(int /* slot */, int /* value */);
+    callback shift-picked(int /* slot */, int /* value */);
     callback inverted-toggled(int);
     callback disabled-toggled(int);
     callback src-b-edited(int, int);
-    callback op-cycled(int);
-    callback debounce-cycled(int);
+    callback op-picked(int /* slot */, int /* value */);
+    callback debounce-picked(int /* slot */, int /* value */);
     callback hide-unused-toggled();
     callback filter-physical-edited(int);
     callback filter-physical-cleared();
-    callback filter-category-cycled();
+    callback filter-category-picked(int /* value */);
     callback add-button-clicked();
 
     background: Palette.bg-panel;
@@ -1174,11 +1287,24 @@ component ButtonsTab inherits Rectangle {
                         clicked => { root.filter-physical-cleared(); }
                     }
                 }
-                CycleCell {
-                    label: "Type";
-                    value-label: root.filter-category-label;
-                    value-width: 116px;
-                    cycled => { root.filter-category-cycled(); }
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    Text {
+                        text: "Type";
+                        color: Palette.text-dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    DropdownCell {
+                        compact: true;
+                        value-label: root.filter-category-label;
+                        value-width: 116px;
+                        entries: root.filter-category-entries;
+                        current-value: root.filter-category-value;
+                        popup-width: 160px;
+                        picked(v) => { root.filter-category-picked(v); }
+                    }
                 }
                 Rectangle { horizontal-stretch: 1; }
                 Text {
@@ -1207,14 +1333,19 @@ component ButtonsTab inherits Rectangle {
                 for btn-data[i] in root.buttons: ButtonRowView {
                     entry: btn-data;
                     slot: btn-data.slot;
+                    type-entries: root.type-entries;
+                    shift-entries: root.shift-entries;
+                    op-entries: root.op-entries;
+                    debounce-entries: root.debounce-entries;
                     physical-edited(s, v) => { root.physical-edited(s, v); }
-                    type-picker-opened(s) => { root.type-picker-opened(s); }
-                    shift-cycled(s) => { root.shift-cycled(s); }
+                    type-opening(s) => { root.type-opening(s); }
+                    type-picked(s, v) => { root.type-picked(s, v); }
+                    shift-picked(s, v) => { root.shift-picked(s, v); }
                     inverted-toggled(s) => { root.inverted-toggled(s); }
                     disabled-toggled(s) => { root.disabled-toggled(s); }
                     src-b-edited(s, v) => { root.src-b-edited(s, v); }
-                    op-cycled(s) => { root.op-cycled(s); }
-                    debounce-cycled(s) => { root.debounce-cycled(s); }
+                    op-picked(s, v) => { root.op-picked(s, v); }
+                    debounce-picked(s, v) => { root.debounce-picked(s, v); }
                 }
             }
         }
@@ -1347,9 +1478,10 @@ struct FastEncoderRow {
 component EncodersTab inherits Rectangle {
     in property <[EncoderRow]> soft;
     in property <[FastEncoderRow]> fast;
-    callback soft-mode-cycled(int);
+    in property <[DropdownEntry]> mode-entries;
+    callback soft-mode-picked(int /* slot */, int /* value */);
     callback fast-enabled-toggled(int);
-    callback fast-mode-cycled(int);
+    callback fast-mode-picked(int /* slot */, int /* value */);
 
     background: Palette.bg-panel;
 
@@ -1398,11 +1530,24 @@ component EncodersTab inherits Rectangle {
                     checked: fast-data.enabled;
                     toggled => { root.fast-enabled-toggled(i); }
                 }
-                CycleCell {
-                    label: "mode";
-                    value-label: fast-data.mode-label;
-                    value-width: 50px;
-                    cycled => { root.fast-mode-cycled(i); }
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    Text {
+                        text: "mode";
+                        color: Palette.text-dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    DropdownCell {
+                        compact: true;
+                        value-label: fast-data.mode-label;
+                        value-width: 50px;
+                        entries: root.mode-entries;
+                        current-value: fast-data.mode-index;
+                        popup-width: 80px;
+                        picked(v) => { root.fast-mode-picked(i, v); }
+                    }
                 }
                 Text {
                     text: fast-data.hint;
@@ -1442,11 +1587,24 @@ component EncodersTab inherits Rectangle {
                             width: 80px;
                             vertical-alignment: center;
                         }
-                        CycleCell {
-                            label: "mode";
-                            value-label: soft-data.mode-label;
-                            value-width: 50px;
-                            cycled => { root.soft-mode-cycled(i); }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            alignment: start;
+                            Text {
+                                text: "mode";
+                                color: Palette.text-dim;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                            DropdownCell {
+                                compact: true;
+                                value-label: soft-data.mode-label;
+                                value-width: 50px;
+                                entries: root.mode-entries;
+                                current-value: soft-data.mode-index;
+                                popup-width: 80px;
+                                picked(v) => { root.soft-mode-picked(i, v); }
+                            }
                         }
                         Rectangle { horizontal-stretch: 1; }
                     }
@@ -1466,7 +1624,8 @@ struct ShiftRegRow {
 
 component ShiftRegsTab inherits Rectangle {
     in property <[ShiftRegRow]> registers;
-    callback type-cycled(int);
+    in property <[DropdownEntry]> type-entries;
+    callback type-picked(int /* slot */, int /* value */);
     callback count-edited(int, int);
 
     background: Palette.bg-panel;
@@ -1505,11 +1664,24 @@ component ShiftRegsTab inherits Rectangle {
                     width: 60px;
                     vertical-alignment: center;
                 }
-                CycleCell {
-                    label: "type";
-                    value-label: reg-data.type-label;
-                    value-width: 140px;
-                    cycled => { root.type-cycled(i); }
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    Text {
+                        text: "type";
+                        color: Palette.text-dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    DropdownCell {
+                        compact: true;
+                        value-label: reg-data.type-label;
+                        value-width: 140px;
+                        entries: root.type-entries;
+                        current-value: reg-data.type-index;
+                        popup-width: 200px;
+                        picked(v) => { root.type-picked(i, v); }
+                    }
                 }
                 NumberCell {
                     label: "buttons";
@@ -1850,119 +2022,6 @@ component ToastBanner inherits Rectangle {
     }
 }
 
-// --- Button-type picker overlay ----------------------------------------
-//
-// Modal-style centred picker. Slint popups are awkward to position
-// near a specific cell across a scrolling Flickable, so we use a
-// dialog-style overlay (matching the AboutDialog pattern). Blocked
-// entries grey out and surface the reason inline so the user sees
-// *why* a choice is rejected instead of the old cycle silently
-// skipping past it.
-component TypePickerOverlay inherits Rectangle {
-    in property <[TypePickerEntry]> entries;
-    in property <[TypeBlockedInfo]> blocked-info;
-    in property <int> slot;
-    in property <int> current-type-index;
-    callback picked(int /* slot */, int /* type-index */);
-    callback dismissed();
-
-    background: #00000088;
-
-    TouchArea {
-        clicked => { root.dismissed(); }
-    }
-
-    Rectangle {
-        background: Palette.bg-panel;
-        border-color: Palette.border;
-        border-width: 1px;
-        border-radius: 8px;
-        width: 360px;
-        height: 560px;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-
-        // Block clicks from falling through to the backdrop.
-        TouchArea { }
-
-        VerticalLayout {
-            padding: 14px;
-            spacing: 6px;
-            Text {
-                text: "Pick button function";
-                color: Palette.accent;
-                font-size: 14px;
-                font-weight: 600;
-            }
-            Text {
-                text: "Greyed entries conflict with another slot on the same physical input.";
-                color: Palette.text-dim;
-                font-size: 10px;
-                wrap: word-wrap;
-            }
-            Rectangle { height: 2px; }
-            Flickable {
-                vertical-stretch: 1;
-                viewport-height: root.entries.length * 26px;
-                VerticalLayout {
-                    spacing: 1px;
-                    for entry[i] in root.entries: Rectangle {
-                        height: entry.is-header ? 22px : 24px;
-                        property <bool> is-blocked: !entry.is-header
-                            && root.blocked-info[entry.type-index].blocked;
-                        property <bool> is-current: !entry.is-header
-                            && entry.type-index == root.current-type-index;
-                        background: entry.is-header
-                            ? transparent
-                            : (entry-ta.has-hover && !is-blocked
-                                ? Palette.bg-cell-hover
-                                : (is-current ? Palette.bg-cell-alt : transparent));
-                        border-color: is-current ? Palette.accent : transparent;
-                        border-width: is-current ? 1px : 0px;
-                        border-radius: 3px;
-                        HorizontalLayout {
-                            padding-left: entry.is-header ? 4px : 22px;
-                            padding-right: 8px;
-                            spacing: 6px;
-                            alignment: start;
-                            Text {
-                                text: entry.label;
-                                color: entry.is-header
-                                    ? Palette.text-dim
-                                    : (is-blocked ? Palette.text-dim
-                                       : (is-current ? Palette.accent : Palette.text));
-                                font-size: entry.is-header ? 10px : 12px;
-                                font-weight: entry.is-header ? 600 : 400;
-                                letter-spacing: entry.is-header ? 0.5px : 0px;
-                                vertical-alignment: center;
-                            }
-                            Rectangle { horizontal-stretch: 1; }
-                            if !entry.is-header && is-blocked: Text {
-                                text: root.blocked-info[entry.type-index].reason;
-                                color: Palette.text-dim;
-                                font-size: 10px;
-                                vertical-alignment: center;
-                            }
-                        }
-                        entry-ta := TouchArea {
-                            enabled: !entry.is-header && !is-blocked;
-                            clicked => { root.picked(root.slot, entry.type-index); }
-                        }
-                    }
-                }
-            }
-            Rectangle { height: 4px; }
-            HorizontalLayout {
-                alignment: end;
-                PillButton {
-                    label: "Cancel";
-                    clicked => { root.dismissed(); }
-                }
-            }
-        }
-    }
-}
-
 // --- About dialog -------------------------------------------------------
 component AboutDialog inherits Rectangle {
     in property <string> app-version;
@@ -2273,7 +2332,21 @@ export component AppWindow inherits Window {
     in property <bool> can-write: false;
     in property <bool> can-save: false;
     in property <[PinRow]> pins: [];
-    in property <[string]> function-labels: [];
+    // Inline-dropdown entries (issue #15). Built once on the Rust side
+    // and pushed at startup. `button-type-entries` blocked flags
+    // refresh per-slot when a Type cell opens; the rest are static.
+    in property <[DropdownEntry]> pin-function-entries: [];
+    in property <[DropdownEntry]> button-type-entries: [];
+    in property <[DropdownEntry]> button-shift-entries: [];
+    in property <[DropdownEntry]> button-op-entries: [];
+    in property <[DropdownEntry]> button-debounce-entries: [];
+    in property <[DropdownEntry]> buttons-filter-category-entries: [];
+    in property <int> buttons-filter-category-value: -1;
+    in property <[DropdownEntry]> axis-filter-entries: [];
+    in property <[DropdownEntry]> axis-resolution-entries: [];
+    in property <[DropdownEntry]> axis-channel-entries: [];
+    in property <[DropdownEntry]> encoder-mode-entries: [];
+    in property <[DropdownEntry]> shift-reg-type-entries: [];
     in property <[AxisRow]> axes: [];
     in property <[ButtonRow]> buttons: [];
     in property <[ShiftSlot]> shifts: [];
@@ -2290,15 +2363,6 @@ export component AppWindow inherits Window {
     in property <string> build-rev: "";
     in property <string> supported-fw: "";
     in-out property <bool> about-open: false;
-
-    // Button-type picker (issue #7). `entries` is static, set once at
-    // startup; `blocked-info` and `current-type-index` refresh whenever
-    // the picker opens.
-    in property <[TypePickerEntry]> button-type-picker-entries: [];
-    in property <[TypeBlockedInfo]> button-type-picker-blocked: [];
-    in property <bool> button-type-picker-open: false;
-    in property <int> button-type-picker-slot: 0;
-    in property <int> button-type-picker-current: 0;
 
     // Buttons-tab filter state (issue #5). Rust owns the truth; these
     // are read-only mirrors so the strip can render its current state.
@@ -2318,32 +2382,34 @@ export component AppWindow inherits Window {
     callback axis-calib-min-edited(int, int);
     callback axis-calib-center-edited(int, int);
     callback axis-calib-max-edited(int, int);
-    callback axis-filter-cycled(int);
+    callback axis-filter-picked(int /* slot */, int /* value */);
     callback axis-deadband-edited(int, int);
     callback axis-dyn-deadband-toggled(int);
-    callback axis-resolution-cycled(int);
-    callback axis-channel-cycled(int);
+    callback axis-resolution-picked(int /* slot */, int /* value */);
+    callback axis-channel-picked(int /* slot */, int /* value */);
     callback button-physical-edited(int, int);
-    callback button-type-picker-opened(int /* slot */);
-    callback button-type-picked(int /* slot */, int /* type-index */);
-    callback button-type-picker-dismissed();
-    callback button-shift-cycled(int);
+    /// Emitted right before a Buttons-tab Type cell shows its popup so
+    /// the Rust side can refresh per-slot blocked flags in
+    /// `button-type-entries` (issue #15).
+    callback button-type-opening(int /* slot */);
+    callback button-type-picked(int /* slot */, int /* value */);
+    callback button-shift-picked(int /* slot */, int /* value */);
     callback buttons-hide-unused-toggled();
     callback buttons-filter-physical-edited(int);
     callback buttons-filter-physical-cleared();
-    callback buttons-filter-category-cycled();
+    callback buttons-filter-category-picked(int /* value */);
     callback buttons-add-clicked();
     callback button-inverted-toggled(int);
     callback button-disabled-toggled(int);
     callback button-src-b-edited(int, int);
-    callback button-op-cycled(int);
-    callback button-debounce-cycled(int);
+    callback button-op-picked(int /* slot */, int /* value */);
+    callback button-debounce-picked(int /* slot */, int /* value */);
     callback shift-edited(int, int);
     callback timer-edited(int, int);
-    callback soft-encoder-mode-cycled(int);
+    callback soft-encoder-mode-picked(int /* slot */, int /* value */);
     callback fast-encoder-enabled-toggled(int);
-    callback fast-encoder-mode-cycled(int);
-    callback shift-reg-type-cycled(int);
+    callback fast-encoder-mode-picked(int /* slot */, int /* value */);
+    callback shift-reg-type-picked(int /* slot */, int /* value */);
     callback shift-reg-count-edited(int, int);
     callback refresh-devices();
     callback device-picked(string);
@@ -2446,41 +2512,51 @@ export component AppWindow inherits Window {
 
             if root.active-tab == 0: PinsTab {
                 pins: root.pins;
-                function-labels: root.function-labels;
+                function-entries: root.pin-function-entries;
                 pin-changed(slot, fn) => { root.pin-changed(slot, fn); }
             }
             if root.active-tab == 1: AxesTab {
                 axes: root.axes;
+                filter-entries: root.axis-filter-entries;
+                resolution-entries: root.axis-resolution-entries;
+                channel-entries: root.axis-channel-entries;
                 out-toggled(s) => { root.axis-out-toggled(s); }
                 inverted-toggled(s) => { root.axis-inverted-toggled(s); }
                 centered-toggled(s) => { root.axis-centered-toggled(s); }
                 calib-min-edited(s, v) => { root.axis-calib-min-edited(s, v); }
                 calib-center-edited(s, v) => { root.axis-calib-center-edited(s, v); }
                 calib-max-edited(s, v) => { root.axis-calib-max-edited(s, v); }
-                filter-cycled(s) => { root.axis-filter-cycled(s); }
+                filter-picked(s, v) => { root.axis-filter-picked(s, v); }
                 deadband-edited(s, v) => { root.axis-deadband-edited(s, v); }
                 dyn-deadband-toggled(s) => { root.axis-dyn-deadband-toggled(s); }
-                resolution-cycled(s) => { root.axis-resolution-cycled(s); }
-                channel-cycled(s) => { root.axis-channel-cycled(s); }
+                resolution-picked(s, v) => { root.axis-resolution-picked(s, v); }
+                channel-picked(s, v) => { root.axis-channel-picked(s, v); }
             }
             if root.active-tab == 2: ButtonsTab {
                 buttons: root.buttons;
+                type-entries: root.button-type-entries;
+                shift-entries: root.button-shift-entries;
+                op-entries: root.button-op-entries;
+                debounce-entries: root.button-debounce-entries;
+                filter-category-entries: root.buttons-filter-category-entries;
+                filter-category-value: root.buttons-filter-category-value;
                 hide-unused: root.buttons-hide-unused;
                 filter-physical: root.buttons-filter-physical;
                 filter-category-label: root.buttons-filter-category-label;
                 visible-count: root.buttons-visible-count;
                 physical-edited(s, v) => { root.button-physical-edited(s, v); }
-                type-picker-opened(s) => { root.button-type-picker-opened(s); }
-                shift-cycled(s) => { root.button-shift-cycled(s); }
+                type-opening(s) => { root.button-type-opening(s); }
+                type-picked(s, v) => { root.button-type-picked(s, v); }
+                shift-picked(s, v) => { root.button-shift-picked(s, v); }
                 inverted-toggled(s) => { root.button-inverted-toggled(s); }
                 disabled-toggled(s) => { root.button-disabled-toggled(s); }
                 src-b-edited(s, v) => { root.button-src-b-edited(s, v); }
-                op-cycled(s) => { root.button-op-cycled(s); }
-                debounce-cycled(s) => { root.button-debounce-cycled(s); }
+                op-picked(s, v) => { root.button-op-picked(s, v); }
+                debounce-picked(s, v) => { root.button-debounce-picked(s, v); }
                 hide-unused-toggled => { root.buttons-hide-unused-toggled(); }
                 filter-physical-edited(v) => { root.buttons-filter-physical-edited(v); }
                 filter-physical-cleared => { root.buttons-filter-physical-cleared(); }
-                filter-category-cycled => { root.buttons-filter-category-cycled(); }
+                filter-category-picked(v) => { root.buttons-filter-category-picked(v); }
                 add-button-clicked => { root.buttons-add-clicked(); }
             }
             if root.active-tab == 3: ShiftsTimersTab {
@@ -2492,13 +2568,15 @@ export component AppWindow inherits Window {
             if root.active-tab == 4: EncodersTab {
                 soft: root.soft-encoders;
                 fast: root.fast-encoders;
-                soft-mode-cycled(i) => { root.soft-encoder-mode-cycled(i); }
+                mode-entries: root.encoder-mode-entries;
+                soft-mode-picked(i, v) => { root.soft-encoder-mode-picked(i, v); }
                 fast-enabled-toggled(i) => { root.fast-encoder-enabled-toggled(i); }
-                fast-mode-cycled(i) => { root.fast-encoder-mode-cycled(i); }
+                fast-mode-picked(i, v) => { root.fast-encoder-mode-picked(i, v); }
             }
             if root.active-tab == 5: ShiftRegsTab {
                 registers: root.shift-registers;
-                type-cycled(i) => { root.shift-reg-type-cycled(i); }
+                type-entries: root.shift-reg-type-entries;
+                type-picked(i, v) => { root.shift-reg-type-picked(i, v); }
                 count-edited(i, v) => { root.shift-reg-count-edited(i, v); }
             }
             if root.active-tab == 6: AdvancedTab {
@@ -2521,14 +2599,5 @@ export component AppWindow inherits Window {
             supported-fw: root.supported-fw;
             closed => { root.about-open = false; }
         }
-    }
-
-    if root.button-type-picker-open: TypePickerOverlay {
-        entries: root.button-type-picker-entries;
-        blocked-info: root.button-type-picker-blocked;
-        slot: root.button-type-picker-slot;
-        current-type-index: root.button-type-picker-current;
-        picked(slot, type-index) => { root.button-type-picked(slot, type-index); }
-        dismissed => { root.button-type-picker-dismissed(); }
     }
 }

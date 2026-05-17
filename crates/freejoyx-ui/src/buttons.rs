@@ -18,7 +18,7 @@ use freejoyx_core::domain::{
 use freejoyx_core::wire::{Button, DeviceConfig, ParamsReport, MAX_BUTTONS_NUM, MAX_SHIFTS_NUM};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::{AppWindow, ButtonRow, ShiftSlot, TimerField, TypeBlockedInfo, TypePickerEntry};
+use crate::{AppWindow, ButtonRow, DropdownEntry, ShiftSlot, TimerField};
 
 /// Number of editable timer fields surfaced on the Shifts & Timers tab.
 /// Indices map to `TIMER_FIELDS` below.
@@ -296,66 +296,128 @@ pub fn refresh_button_row(
     }
 }
 
-/// Build the static category-grouped picker entries (one header per
-/// [`ButtonTypeCategory`] followed by its entries in display order).
-/// Called once at app startup and pushed onto
-/// `AppWindow::button_type_picker_entries`.
+/// Build the category-grouped Type-picker entries for the Buttons tab
+/// (issue #15). Returns a flat list of [`DropdownEntry`] rows: one
+/// `is_header: true` row per [`ButtonTypeCategory`] followed by its
+/// entries in display order.
+///
+/// `blocked_context` (if `Some`) sets the per-physical coexistence
+/// blocked flags on each entry for the supplied slot — used when a
+/// Type cell opens so the user sees *why* a candidate is rejected.
+/// Pass `None` for the initial startup build (all entries unblocked).
 #[must_use]
-pub fn build_picker_entries() -> Vec<TypePickerEntry> {
+pub fn build_button_type_entries(
+    blocked_context: Option<(&[Button; MAX_BUTTONS_NUM], usize, i8)>,
+) -> Vec<DropdownEntry> {
     let mut out = Vec::with_capacity(64);
     for cat in ButtonTypeCategory::all() {
-        out.push(TypePickerEntry {
+        out.push(DropdownEntry {
             is_header: true,
             label: SharedString::from(cat.label()),
-            type_index: -1,
+            value: -1,
+            blocked: false,
+            blocked_reason: SharedString::default(),
         });
         for bt in cat.entries() {
-            out.push(TypePickerEntry {
+            let (blocked, reason) = match blocked_context {
+                Some((buttons, slot, phy)) => {
+                    match physical_assignment_blocked(buttons, slot, phy, *bt) {
+                        CoexistenceCheck::Ok => (false, SharedString::default()),
+                        CoexistenceCheck::Blocked { other_slot, other_type } => {
+                            let other_label = ButtonType::from_u8(other_type).map_or_else(
+                                || format!("? ({other_type})"),
+                                |t| t.label().to_string(),
+                            );
+                            (
+                                true,
+                                SharedString::from(format!(
+                                    "slot {} uses {other_label}",
+                                    other_slot + 1
+                                )),
+                            )
+                        }
+                    }
+                }
+                None => (false, SharedString::default()),
+            };
+            out.push(DropdownEntry {
                 is_header: false,
                 label: SharedString::from(bt.label()),
-                type_index: i32::from(bt.to_u8()),
+                value: i32::from(bt.to_u8()),
+                blocked,
+                blocked_reason: reason,
             });
         }
     }
     out
 }
 
-/// For the currently-open picker, compute one [`TypeBlockedInfo`] per
-/// `ButtonType` (length 36 — entries indexed by the wire byte). Header
-/// rows in the picker carry `type_index == -1` and ignore this array.
+/// Flat dropdown entries for the Buttons-tab Shift column. `0` means
+/// "no shift modifier"; entries 1..=8 map to the eight shift slots.
 #[must_use]
-pub fn build_blocked_info(
-    buttons: &[Button; MAX_BUTTONS_NUM],
-    slot: usize,
-    physical_num: i8,
-) -> Vec<TypeBlockedInfo> {
-    (0u8..=35)
-        .map(|raw| {
-            let Some(candidate) = ButtonType::from_u8(raw) else {
-                return TypeBlockedInfo {
-                    blocked: false,
-                    reason: SharedString::default(),
-                };
-            };
-            match physical_assignment_blocked(buttons, slot, physical_num, candidate) {
-                CoexistenceCheck::Ok => TypeBlockedInfo {
-                    blocked: false,
-                    reason: SharedString::default(),
-                },
-                CoexistenceCheck::Blocked { other_slot, other_type } => {
-                    let other_label = ButtonType::from_u8(other_type)
-                        .map_or_else(|| format!("? ({other_type})"), |t| t.label().to_string());
-                    TypeBlockedInfo {
-                        blocked: true,
-                        reason: SharedString::from(format!(
-                            "slot {} uses {other_label}",
-                            other_slot + 1
-                        )),
-                    }
-                }
-            }
-        })
-        .collect()
+pub fn build_button_shift_entries() -> Vec<DropdownEntry> {
+    let mut out = Vec::with_capacity(9);
+    out.push(flat_entry("—", 0));
+    for i in 1..=8 {
+        out.push(flat_entry(&format!("Shift {i}"), i));
+    }
+    out
+}
+
+/// Flat dropdown entries for the LOGIC Op column. Matches the Qt
+/// configurator's operator labels.
+#[must_use]
+pub fn build_button_op_entries() -> Vec<DropdownEntry> {
+    [
+        (LogicOp::And, "AND"),
+        (LogicOp::Or, "OR"),
+        (LogicOp::Not, "NOT"),
+        (LogicOp::Nor, "NOR"),
+        (LogicOp::Nand, "NAND"),
+        (LogicOp::Xor, "XOR"),
+        (LogicOp::AAndNotB, "A AND NOT B"),
+    ]
+    .iter()
+    .map(|(op, label)| flat_entry(label, i32::from(*op as u8)))
+    .collect()
+}
+
+/// Flat dropdown entries for the LOGIC Debounce column. Mirrors the
+/// `timer_picker_label` shape used in the row's value cell.
+#[must_use]
+pub fn build_button_debounce_entries() -> Vec<DropdownEntry> {
+    let mut out = Vec::with_capacity(4);
+    out.push(flat_entry("off", 0));
+    for i in 1..=3 {
+        out.push(flat_entry(&format!("Timer {i}"), i));
+    }
+    out
+}
+
+/// Flat dropdown entries for the Buttons-tab filter strip's Type
+/// category picker. Value -1 = "All", otherwise the
+/// [`ButtonTypeCategory`] index inside [`ButtonTypeCategory::all`].
+#[must_use]
+pub fn build_filter_category_entries() -> Vec<DropdownEntry> {
+    let mut out = Vec::with_capacity(12);
+    out.push(flat_entry("All", -1));
+    for (i, cat) in ButtonTypeCategory::all().enumerate() {
+        out.push(flat_entry(
+            cat.label(),
+            i32::try_from(i).unwrap_or(0),
+        ));
+    }
+    out
+}
+
+fn flat_entry(label: &str, value: i32) -> DropdownEntry {
+    DropdownEntry {
+        is_header: false,
+        label: SharedString::from(label),
+        value,
+        blocked: false,
+        blocked_reason: SharedString::default(),
+    }
 }
 
 /// Mutate a button slot under `state.last_config`. Returns the most
@@ -420,58 +482,50 @@ pub fn wire_callbacks(
     }));
     window.on_button_inverted_toggled(mk_btn_toggle(|b| b.set_is_inverted(!b.is_inverted())));
     window.on_button_disabled_toggled(mk_btn_toggle(|b| b.set_is_disabled(!b.is_disabled())));
-    window.on_button_shift_cycled(mk_btn_toggle(|b| {
-        let next = (b.shift_modificator() + 1) % 9;
-        b.set_shift_modificator(next);
-    }));
-    window.on_button_op_cycled(mk_btn_toggle(|b| {
-        let next = (b.op() + 1) % 7;
-        b.set_op(next);
-    }));
-    window.on_button_debounce_cycled(mk_btn_toggle(|b| {
-        let next = (b.delay_timer() + 1) % 4;
-        b.set_delay_timer(next);
-    }));
+    {
+        let mk_picked = |cb: fn(&mut Button, i32)| mk_btn_int(cb);
+        window.on_button_shift_picked(mk_picked(|b, v| {
+            let clamped = u8::try_from(v.clamp(0, 8)).unwrap_or(0);
+            b.set_shift_modificator(clamped);
+        }));
+        window.on_button_op_picked(mk_picked(|b, v| {
+            let clamped = u8::try_from(v.clamp(0, 6)).unwrap_or(0);
+            b.set_op(clamped);
+        }));
+        window.on_button_debounce_picked(mk_picked(|b, v| {
+            let clamped = u8::try_from(v.clamp(0, 3)).unwrap_or(0);
+            b.set_delay_timer(clamped);
+        }));
+    }
 
-    // Type picker (issue #7) — replaces the old wire-order cycle.
-    // Opening computes per-physical blocked state for the slot and
-    // populates the overlay; clicking an entry applies the type and
-    // closes the picker.
+    // Inline Type-picker (issue #15) — refresh per-slot blocked flags
+    // on the shared entries model right before the popup shows. Pick
+    // re-checks coexistence in case the config drifted while the popup
+    // was open.
+    let type_entries_model: Rc<VecModel<DropdownEntry>> =
+        Rc::new(VecModel::from(build_button_type_entries(None)));
+    window.set_button_type_entries(ModelRc::from(type_entries_model.clone()));
     {
         let s = state.clone();
-        let w = window.as_weak();
-        let blocked_model: Rc<VecModel<TypeBlockedInfo>> = Rc::new(VecModel::default());
-        if let Some(w_now) = w.upgrade() {
-            w_now.set_button_type_picker_blocked(ModelRc::from(blocked_model.clone()));
-        }
-        let blocked_for_open = blocked_model.clone();
-        window.on_button_type_picker_opened(move |slot| {
+        let entries = type_entries_model.clone();
+        window.on_button_type_opening(move |slot| {
             let Ok(slot_usz) = usize::try_from(slot) else {
                 return;
             };
-            let (info, current) = {
-                let st = s.borrow();
-                let Some(cfg) = st.last_config.as_ref() else {
-                    return;
-                };
-                if slot_usz >= MAX_BUTTONS_NUM {
-                    return;
-                }
-                let phy = cfg.buttons[slot_usz].physical_num;
-                let info = build_blocked_info(&cfg.buttons, slot_usz, phy);
-                let current = i32::from(cfg.buttons[slot_usz].button_type);
-                (info, current)
+            let st = s.borrow();
+            let Some(cfg) = st.last_config.as_ref() else {
+                return;
             };
-            while blocked_for_open.row_count() > 0 {
-                blocked_for_open.remove(0);
+            if slot_usz >= MAX_BUTTONS_NUM {
+                return;
             }
-            for v in info {
-                blocked_for_open.push(v);
+            let phy = cfg.buttons[slot_usz].physical_num;
+            let fresh = build_button_type_entries(Some((&cfg.buttons, slot_usz, phy)));
+            while entries.row_count() > 0 {
+                entries.remove(0);
             }
-            if let Some(w_now) = w.upgrade() {
-                w_now.set_button_type_picker_slot(slot);
-                w_now.set_button_type_picker_current(current);
-                w_now.set_button_type_picker_open(true);
+            for e in fresh {
+                entries.push(e);
             }
         });
     }
@@ -479,42 +533,28 @@ pub fn wire_callbacks(
         let s = state.clone();
         let m = button_model.clone();
         let w = window.as_weak();
-        window.on_button_type_picked(move |slot, type_index| {
+        window.on_button_type_picked(move |slot, value| {
             let Ok(slot_usz) = usize::try_from(slot) else {
                 return;
             };
-            let Ok(type_index_u8) = u8::try_from(type_index) else {
+            let Ok(value_u8) = u8::try_from(value) else {
                 return;
             };
-            if ButtonType::from_u8(type_index_u8).is_none() {
+            if ButtonType::from_u8(value_u8).is_none() {
                 return;
             }
             let _ = with_button_slot(&s, slot_usz, |b, all_buttons| {
-                // Re-check coexistence at pick time so a stale picker
-                // (config changed while open) can't write a now-invalid
-                // type.
-                let candidate = ButtonType::from_u8(type_index_u8).unwrap_or(ButtonType::Normal);
+                let candidate = ButtonType::from_u8(value_u8).unwrap_or(ButtonType::Normal);
                 match physical_assignment_blocked(all_buttons, slot_usz, b.physical_num, candidate)
                 {
                     CoexistenceCheck::Ok => {
-                        b.button_type = type_index_u8;
+                        b.button_type = value_u8;
                     }
                     CoexistenceCheck::Blocked { .. } => {}
                 }
             });
             refresh_after_button_edit(&s, &m, slot_usz);
             mark_dirty(&w);
-            if let Some(w_now) = w.upgrade() {
-                w_now.set_button_type_picker_open(false);
-            }
-        });
-    }
-    {
-        let w = window.as_weak();
-        window.on_button_type_picker_dismissed(move || {
-            if let Some(w_now) = w.upgrade() {
-                w_now.set_button_type_picker_open(false);
-            }
         });
     }
 
@@ -627,11 +667,13 @@ fn rebuild_filtered(
             .and_then(|i| ButtonTypeCategory::all().nth(i))
             .map_or("All", ButtonTypeCategory::label);
         w.set_buttons_filter_category_label(SharedString::from(label));
+        w.set_buttons_filter_category_value(
+            s.btn_filter_category
+                .and_then(|i| i32::try_from(i).ok())
+                .unwrap_or(-1),
+        );
     }
 }
-
-/// Number of category-cycle positions: 11 categories + "All".
-const CATEGORY_CYCLE_LEN: usize = 12;
 
 fn wire_filter_callbacks(
     window: &AppWindow,
@@ -682,18 +724,13 @@ fn wire_filter_callbacks(
         let s = state.clone();
         let m = button_model.clone();
         let w = window.as_weak();
-        window.on_buttons_filter_category_cycled(move || {
+        window.on_buttons_filter_category_picked(move |value| {
             {
                 let mut st = s.borrow_mut();
-                // Encode "All" as position 11; categories occupy 0..=10.
-                let current = st
-                    .btn_filter_category
-                    .unwrap_or(CATEGORY_CYCLE_LEN - 1);
-                let next = (current + 1) % CATEGORY_CYCLE_LEN;
-                st.btn_filter_category = if next == CATEGORY_CYCLE_LEN - 1 {
+                st.btn_filter_category = if value < 0 {
                     None
                 } else {
-                    Some(next)
+                    usize::try_from(value).ok()
                 };
             }
             rebuild_filtered(&s, &m, &w);

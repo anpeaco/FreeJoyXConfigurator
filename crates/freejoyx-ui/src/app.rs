@@ -24,7 +24,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use freejoyx_core::domain::{
-    validate_pins, AxisFilter, Board, ButtonTypeCategory, PinConflict, PinFunction,
+    validate_pins, AxisFilter, Board, ButtonTypeCategory, EncoderMode, PinConflict, PinFunction,
+    PinFunctionFamily, ShiftRegType,
 };
 use freejoyx_core::persist::{load_from_file, save_to_file};
 use freejoyx_core::wire::{
@@ -39,8 +40,8 @@ use crate::buttons as buttons_glue;
 use crate::encoders as encoders_glue;
 use crate::settings;
 use crate::{
-    AppWindow, AxisRow, ButtonRow, DeviceOption, EncoderRow, FastEncoderRow, Palette, PinRow,
-    ShiftRegRow, ShiftSlot, TimerField,
+    AppWindow, AxisRow, ButtonRow, DeviceOption, DropdownEntry, EncoderRow, FastEncoderRow,
+    Palette, PinRow, ShiftRegRow, ShiftSlot, TimerField,
 };
 
 /// State the UI mutates outside of Slint's reactivity. Held inside a
@@ -177,16 +178,28 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
         "{SUPPORTED_FIRMWARE_VERSION:04X}"
     )));
 
-    // Populate function-label list once — it's static.
-    let labels: Vec<SharedString> = PinFunction::all()
-        .map(|f| SharedString::from(f.label()))
-        .collect();
-    window.set_function_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
-
-    // Build the category-grouped button-type picker entries once.
-    // Blocked-info is populated per open in `buttons::wire_callbacks`.
-    let picker_entries = buttons_glue::build_picker_entries();
-    window.set_button_type_picker_entries(ModelRc::from(Rc::new(VecModel::from(picker_entries))));
+    // Populate the inline-dropdown entries models (issue #15). All
+    // entries below are static except for `button_type_entries`, which
+    // gets refreshed per-slot on each Type cell's `opening` callback —
+    // initial fill is the unblocked baseline.
+    push_pin_function_entries(&window);
+    push_axis_filter_entries(&window);
+    push_axis_resolution_entries(&window);
+    push_axis_channel_entries(&window);
+    push_encoder_mode_entries(&window);
+    push_shift_reg_type_entries(&window);
+    window.set_button_shift_entries(ModelRc::from(Rc::new(VecModel::from(
+        buttons_glue::build_button_shift_entries(),
+    ))));
+    window.set_button_op_entries(ModelRc::from(Rc::new(VecModel::from(
+        buttons_glue::build_button_op_entries(),
+    ))));
+    window.set_button_debounce_entries(ModelRc::from(Rc::new(VecModel::from(
+        buttons_glue::build_button_debounce_entries(),
+    ))));
+    window.set_buttons_filter_category_entries(ModelRc::from(Rc::new(VecModel::from(
+        buttons_glue::build_filter_category_entries(),
+    ))));
 
     let state = Rc::new(RefCell::new(State::new(handle)));
 
@@ -672,14 +685,17 @@ fn wire_axis_callbacks(
     window.on_axis_dyn_deadband_toggled(mk_toggle(|a| {
         a.set_is_dynamic_deadband(!a.is_dynamic_deadband());
     }));
-    window.on_axis_filter_cycled(mk_toggle(|a| {
-        a.set_filter((a.filter() + 1) % 8);
+    window.on_axis_filter_picked(mk_int(|a, v| {
+        let clamped = u8::try_from(v.clamp(0, 7)).unwrap_or(0);
+        a.set_filter(clamped);
     }));
-    window.on_axis_resolution_cycled(mk_toggle(|a| {
-        a.set_resolution((a.resolution() + 1) % 16);
+    window.on_axis_resolution_picked(mk_int(|a, v| {
+        let clamped = u8::try_from(v.clamp(0, 15)).unwrap_or(0);
+        a.set_resolution(clamped);
     }));
-    window.on_axis_channel_cycled(mk_toggle(|a| {
-        a.set_channel((a.channel() + 1) % 16);
+    window.on_axis_channel_picked(mk_int(|a, v| {
+        let clamped = u8::try_from(v.clamp(0, 15)).unwrap_or(0);
+        a.set_channel(clamped);
     }));
 
     window.on_axis_calib_min_edited(mk_int(|a, v| a.calib_min = clamp_i16(v)));
@@ -845,6 +861,113 @@ fn wire_theme_callback(window: &AppWindow) {
         palette.set_dark(next);
         settings::save_dark(next);
     });
+}
+
+// --- Dropdown entries (issue #15) ---------------------------------------
+//
+// One builder + push helper per shared dropdown entries model. All are
+// static at startup (no per-row state). `button_type_entries` is the
+// exception — its blocked flags refresh per slot in
+// `buttons::wire_callbacks` when a Type cell opens.
+
+fn flat_dropdown(label: &str, value: i32) -> DropdownEntry {
+    DropdownEntry {
+        is_header: false,
+        label: SharedString::from(label),
+        value,
+        blocked: false,
+        blocked_reason: SharedString::default(),
+    }
+}
+
+fn header_dropdown(label: &str) -> DropdownEntry {
+    DropdownEntry {
+        is_header: true,
+        label: SharedString::from(label),
+        value: -1,
+        blocked: false,
+        blocked_reason: SharedString::default(),
+    }
+}
+
+fn push_pin_function_entries(window: &AppWindow) {
+    // Group PinFunction variants by their PinFunctionFamily for
+    // discoverability (issue #15). Within each group, render
+    // PinFunctions in PinFunction::all() iteration order — same wire
+    // order the Qt configurator uses.
+    let families = [
+        (PinFunctionFamily::NotUsed, "Unused"),
+        (PinFunctionFamily::Button, "Buttons"),
+        (PinFunctionFamily::Axis, "Axis"),
+        (PinFunctionFamily::Encoder, "Encoder"),
+        (PinFunctionFamily::Bus, "Bus (SPI / I2C / UART)"),
+        (PinFunctionFamily::Sensor, "Sensor"),
+        (PinFunctionFamily::ShiftReg, "Shift register"),
+        (PinFunctionFamily::Led, "LED"),
+        (PinFunctionFamily::RgbLed, "RGB LED"),
+    ];
+    let all: Vec<PinFunction> = PinFunction::all().collect();
+    let mut entries = Vec::with_capacity(all.len() + families.len());
+    for (family, label) in families {
+        let mut group: Vec<(usize, &PinFunction)> = all
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.family() == family)
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        entries.push(header_dropdown(label));
+        // Preserve PinFunction::all() order inside the group.
+        group.sort_by_key(|(i, _)| *i);
+        for (i, f) in group {
+            entries.push(flat_dropdown(
+                f.label(),
+                i32::try_from(i).unwrap_or(0),
+            ));
+        }
+    }
+    window.set_pin_function_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
+}
+
+fn push_axis_filter_entries(window: &AppWindow) {
+    let entries: Vec<DropdownEntry> = AxisFilter::all()
+        .map(|f| flat_dropdown(f.label(), i32::from(f.to_u8())))
+        .collect();
+    window.set_axis_filter_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
+}
+
+fn push_axis_resolution_entries(window: &AppWindow) {
+    // 1..=16-bit (wire field is 4 bits = 16 positions). Resolutions
+    // are exposed in the Qt configurator as 1-bit through 16-bit.
+    let entries: Vec<DropdownEntry> = (0u8..16)
+        .map(|raw| flat_dropdown(&format!("{}", raw + 1), i32::from(raw)))
+        .collect();
+    window.set_axis_resolution_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
+}
+
+fn push_axis_channel_entries(window: &AppWindow) {
+    // 8 axes — pickable channel is 0..=7 plus 7 placeholder slots the
+    // wire reserves. Surface 0..=7 as friendly labels; the rest stay
+    // numeric.
+    let entries: Vec<DropdownEntry> = (0u8..16)
+        .map(|raw| flat_dropdown(&format!("{raw}"), i32::from(raw)))
+        .collect();
+    window.set_axis_channel_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
+}
+
+fn push_encoder_mode_entries(window: &AppWindow) {
+    let entries: Vec<DropdownEntry> = EncoderMode::all()
+        .map(|m| flat_dropdown(m.label(), i32::from(m.to_u8())))
+        .collect();
+    window.set_encoder_mode_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
+}
+
+fn push_shift_reg_type_entries(window: &AppWindow) {
+    let entries: Vec<DropdownEntry> = ShiftRegType::all()
+        .map(|t| flat_dropdown(t.label(), i32::from(t.to_u8())))
+        .collect();
+    window.set_shift_reg_type_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
 }
 
 fn refresh_pin_model(model: &Rc<VecModel<PinRow>>, cfg: &DeviceConfig, board: Board) {

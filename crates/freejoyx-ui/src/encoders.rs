@@ -109,24 +109,27 @@ pub fn wire_callbacks(
     fast_model: &Rc<VecModel<FastEncoderRow>>,
     shift_reg_model: &Rc<VecModel<ShiftRegRow>>,
 ) {
-    // Soft encoder mode cycle.
+    // Soft encoder mode pick.
     {
         let s = state.clone();
         let m = soft_model.clone();
         let w = window.as_weak();
-        window.on_soft_encoder_mode_cycled(move |slot| {
+        window.on_soft_encoder_mode_picked(move |slot, value| {
             let Ok(slot) = usize::try_from(slot) else {
                 return;
             };
             if slot >= MAX_ENCODERS_NUM {
                 return;
             }
+            let Ok(mode) = u8::try_from(value.clamp(0, 2)) else {
+                return;
+            };
             {
                 let mut st = s.borrow_mut();
                 let Some(cfg) = st.last_config.as_mut() else {
                     return;
                 };
-                cfg.encoders[slot] = (cfg.encoders[slot] + 1) % 3;
+                cfg.encoders[slot] = mode;
             }
             if let Some(cfg) = s.borrow().last_config.as_ref() {
                 m.set_row_data(slot, build_soft_encoder_row(slot, cfg.encoders[slot]));
@@ -162,25 +165,27 @@ pub fn wire_callbacks(
         });
     }
 
-    // Fast encoder mode cycle.
+    // Fast encoder mode pick.
     {
         let s = state.clone();
         let m = fast_model.clone();
         let w = window.as_weak();
-        window.on_fast_encoder_mode_cycled(move |slot| {
+        window.on_fast_encoder_mode_picked(move |slot, value| {
             let Ok(slot) = usize::try_from(slot) else {
                 return;
             };
             if slot >= MAX_FAST_ENCODER_NUM {
                 return;
             }
+            let Ok(mode) = u8::try_from(value.clamp(0, 2)) else {
+                return;
+            };
             {
                 let mut st = s.borrow_mut();
                 let Some(cfg) = st.last_config.as_mut() else {
                     return;
                 };
-                let fe = &mut cfg.fast_encoders[slot];
-                fe.mode = (fe.mode + 1) % 3;
+                cfg.fast_encoders[slot].mode = mode;
             }
             if let Some(cfg) = s.borrow().last_config.as_ref() {
                 m.set_row_data(slot, build_fast_encoder_row(slot, &cfg.fast_encoders[slot]));
@@ -189,25 +194,27 @@ pub fn wire_callbacks(
         });
     }
 
-    // Shift register type cycle.
+    // Shift register type pick.
     {
         let s = state.clone();
         let m = shift_reg_model.clone();
         let w = window.as_weak();
-        window.on_shift_reg_type_cycled(move |slot| {
+        window.on_shift_reg_type_picked(move |slot, value| {
             let Ok(slot) = usize::try_from(slot) else {
                 return;
             };
             if slot >= MAX_SHIFT_REG_NUM {
                 return;
             }
+            let Ok(reg_type) = u8::try_from(value.clamp(0, 3)) else {
+                return;
+            };
             {
                 let mut st = s.borrow_mut();
                 let Some(cfg) = st.last_config.as_mut() else {
                     return;
                 };
-                let sr = &mut cfg.shift_registers[slot];
-                sr.reg_type = (sr.reg_type + 1) % 4;
+                cfg.shift_registers[slot].reg_type = reg_type;
             }
             if let Some(cfg) = s.borrow().last_config.as_ref() {
                 m.set_row_data(slot, build_shift_reg_row(slot, &cfg.shift_registers[slot]));
