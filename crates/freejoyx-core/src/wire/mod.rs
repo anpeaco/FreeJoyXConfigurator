@@ -19,10 +19,14 @@ pub mod config;
 pub mod cursor;
 pub mod display;
 pub mod error;
+pub mod firmware_version;
 pub mod fragments;
 pub mod params;
 
 pub use display::format_config;
+pub use firmware_version::{
+    is_supported_firmware_version, mask_group, FIRMWARE_VERSION_MASK, SUPPORTED_FIRMWARE_VERSION,
+};
 
 pub use config::{
     AxisConfig, AxisToButtons, Button, DeviceConfig, FastEncoder, PhysBreakdown, ShiftRegConfig,
