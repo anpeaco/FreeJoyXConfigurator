@@ -25,6 +25,7 @@ mod advanced;
 pub mod app;
 mod buttons;
 mod encoders;
+pub mod log_dir;
 
 pub use app::run;
 

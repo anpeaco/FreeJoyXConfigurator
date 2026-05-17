@@ -13,9 +13,31 @@ default-run = "freejoyx-app"
 name = "freejoyx-app"
 path = "src/main.rs"
 
+# cargo-bundle metadata (https://github.com/burtonageo/cargo-bundle).
+# Run `cargo bundle --release` on macOS/Windows/Linux to produce a
+# platform-native installer. The `.msi` and `.dmg` outputs roll the
+# binary + icon + license into a redistributable.
+[package.metadata.bundle]
+name = "FreeJoyXConfigurator"
+identifier = "com.anpeaco.freejoyx-configurator"
+icon = ["../freejoyx-ui/assets/icon.svg"]
+version = "0.1.0"
+copyright = "Copyright (c) 2026 FreeJoyXConfigurator contributors"
+category = "Utility"
+short_description = "Configurator for FreeJoyX DIY USB HID game controllers."
+long_description = """
+Native Rust + Slint configurator for the FreeJoyX firmware family.
+Talks to FreeJoyX boards over USB HID, reads and writes the on-device
+configuration, and renders a live overlay of axis / button state for
+calibration and debugging. v0.1 covers the Pins, Axes, Buttons + Logic,
+Shifts & Timers, Encoders, Shift Registers, and Advanced Settings tabs.
+"""
+osx_minimum_system_version = "11.0"
+
 [dependencies]
 freejoyx-core = { workspace = true }
 freejoyx-device = { workspace = true }
 freejoyx-ui = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }

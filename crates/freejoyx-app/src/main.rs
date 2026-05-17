@@ -23,7 +23,7 @@ use freejoyx_core::wire::{format_config, ParamsReport};
 use freejoyx_device::{enumerate, spawn_for_serial, Command, DeviceEvent};
 
 fn main() -> ExitCode {
-    init_tracing();
+    let _log_guard = init_tracing();
 
     let mut args = env::args().skip(1).collect::<Vec<_>>().into_iter();
     let cmd = args.next();
@@ -73,13 +73,41 @@ fn parse_serial_flag(args: Vec<String>) -> Option<String> {
     None
 }
 
-fn init_tracing() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+/// Initialise tracing with a stderr fmt layer and a rolling daily file
+/// in [`freejoyx_ui::log_dir`]. Returns the non-blocking-writer guard
+/// for the file layer; dropping it on shutdown lets pending writes
+/// flush.
+fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let log_dir = freejoyx_ui::log_dir::resolve();
+    let (file_layer, guard) = match std::fs::create_dir_all(&log_dir) {
+        Ok(()) => {
+            let appender = tracing_appender::rolling::daily(&log_dir, "freejoyx-app.log");
+            let (nb, guard) = tracing_appender::non_blocking(appender);
+            (
+                Some(
+                    tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(nb),
+                ),
+                Some(guard),
+            )
+        }
+        Err(_) => (None, None),
+    };
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(file_layer)
         .init();
+
+    guard
 }
 
 fn print_help() {
