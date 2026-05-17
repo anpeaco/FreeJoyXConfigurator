@@ -1,0 +1,138 @@
+From: FreeJoyXConfigurator Slice 0.5 fixture capture
+Subject: Throwaway dump-to-disk patch for hiddevice.cpp
+
+Apply this patch to a clean checkout of FreeJoyXConfiguratorQt
+(throwaway branch — do not commit, do not push). It adds a single
+side-effect controlled by the env var FREEJOYX_DUMP_FIXTURE.
+
+When the env var is set to a directory path:
+  - Every incoming REPORT_ID_CONFIG_IN fragment (64 bytes incl.
+    report-id + index header) is appended to
+    $FREEJOYX_DUMP_FIXTURE/config.fragments.bin
+  - The fully assembled dev_config_t (FREEJOY_DEV_CONFIG_SIZE bytes,
+    1580 in v0.0.10) is written to
+    $FREEJOYX_DUMP_FIXTURE/config.bin once "All config received" fires
+  - Every successful REPORT_ID_PARAM packet (64 bytes incl. report-id)
+    is appended to
+    $FREEJOYX_DUMP_FIXTURE/params.bin
+
+When the env var is unset, the build is identical to mainline Qt.
+
+Usage from a Bash-on-Windows or PowerShell prompt:
+  $env:FREEJOYX_DUMP_FIXTURE = "C:\path\to\FreeJoyXConfigurator\fixtures\_capture_wide"
+  .\FreeJoyQt.exe
+  # then click Read Config, wait for "All config received", move stick,
+  # press buttons, etc., then close the app.
+
+The capture is unconditionally appended, so delete the target
+directory between runs to keep fixtures clean.
+
+----------------------------------------------------------------------
+
+diff --git a/src/hiddevice.cpp b/src/hiddevice.cpp
+--- a/src/hiddevice.cpp
++++ b/src/hiddevice.cpp
+@@ -1,6 +1,9 @@
+ // existing includes ...
+ #include "hiddevice.h"
++#include <QDir>
++#include <QFile>
++#include <QFileInfo>
+
+ // ====================================================================
+ // BEGIN throwaway fixture-capture helpers (FreeJoyXConfigurator port).
+ // Remove before merging anywhere.
+@@
++namespace {
++
++static QString fjxDumpDir()
++{
++    static const QString d = QString::fromLocal8Bit(qgetenv("FREEJOYX_DUMP_FIXTURE"));
++    return d;
++}
++
++static void fjxAppend(const QString &filename, const uint8_t *data, qsizetype len)
++{
++    const QString dir = fjxDumpDir();
++    if (dir.isEmpty()) return;
++    QDir().mkpath(dir);
++    QFile f(dir + "/" + filename);
++    if (!f.open(QIODevice::Append)) return;
++    f.write(reinterpret_cast<const char*>(data), len);
++    f.close();
++}
++
++static void fjxWrite(const QString &filename, const void *data, qsizetype len)
++{
++    const QString dir = fjxDumpDir();
++    if (dir.isEmpty()) return;
++    QDir().mkpath(dir);
++    QFile f(dir + "/" + filename);
++    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
++    f.write(reinterpret_cast<const char*>(data), len);
++    f.close();
++}
++
++} // namespace
++// END throwaway fixture-capture helpers.
++
+ // ... existing code ...
+
+@@ around line 373 in the REPORT_ID_PARAM read branch
+                         if (ReportConverter::paramReport(deviceBuffer) == -1) continue;
+                         if (ReportConverter::paramReport(deviceBuffer)) { // datarace?
++                            // FJX-CAPTURE: dump the raw 64-byte params packet
++                            fjxAppend("params.bin", deviceBuffer, BUFFERSIZE);
+                             emit paramsPacketReceived(true);
+                         } else {
+
+@@ around line 509 in readConfigFromDevice
+                     if (buffer[1] == config_request_buffer[1])
+                     {
+                         ReportConverter::getConfigFromDevice(buffer);
++                        // FJX-CAPTURE: dump the raw 64-byte config fragment
++                        fjxAppend("config.fragments.bin", buffer, BUFFERSIZE);
+                         config_request_buffer[1] += 1;
+                         hid_write(m_paramsRead, config_request_buffer, 2);
+                         report_count++;
+
+@@ around line 584 in readConfigFromDevice success path
+     if (report_count == cfg_count) {
++        // FJX-CAPTURE: dump the fully assembled dev_config_t (pre-migration)
++        if (gEnv.pDeviceConfig) {
++            fjxWrite("config.bin",
++                     &gEnv.pDeviceConfig->config,
++                     sizeof(gEnv.pDeviceConfig->config));
++        }
+         // Migrate if the device was running an older firmware version.
+
+----------------------------------------------------------------------
+
+NOTES
+
+1. The patch deliberately writes config.bin BEFORE the legacy-migration
+   block. For FIRMWARE_VERSION=0x0010 boards this is a no-op (migration
+   only runs when (device_fw & 0xFFF0) != (FIRMWARE_VERSION & 0xFFF0)),
+   but writing pre-migration is the right semantics: the fixture is the
+   raw bytes the device put on the wire, not the configurator's
+   reinterpretation.
+
+2. params.bin is the raw 64-byte HID frame (1 byte report-id + 71 bytes
+   payload + 0 padding = 72 used + 0 unused, BUFFERSIZE is 64 so the
+   payload extends only as far as the buffer; cross-check against
+   FREEJOY_PARAMS_REPORT_SIZE in common_defines.h).
+
+   Hmm — re-check: FREEJOY_PARAMS_REPORT_SIZE = 72 but BUFFERSIZE
+   appears to be 64. If the report is truly 72 bytes, hid_read_timeout
+   should be reading more than 64. Verify this against the actual
+   common_defines.h when reading fixtures. If BUFFERSIZE is too small,
+   the dumped params.bin is truncated; either expand BUFFERSIZE in the
+   patch or audit how the Qt app currently handles 72-byte reports.
+
+3. The patch uses Qt's QFile rather than std::fstream so the capture
+   doesn't add any new platform dependencies; it compiles wherever the
+   Qt app already compiles.
+
+4. Throwaway. After capture is complete and fixtures are in the Rust
+   repo, discard the patched branch. Do NOT commit this to
+   FreeJoyXConfiguratorQt.
