@@ -23,6 +23,7 @@
 
 pub mod app;
 mod buttons;
+mod encoders;
 
 pub use app::run;
 

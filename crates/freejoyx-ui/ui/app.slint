@@ -882,6 +882,208 @@ component ShiftsTimersTab inherits Rectangle {
     }
 }
 
+// --- Encoders tab ------------------------------------------------------
+//
+// 16 soft encoder slots (each: mode 1x/2x/4x) plus 2 fast encoder
+// slots (enabled flag + mode). Fast encoder pins are silicon-locked on
+// F103 (PA8/PA9 = Fast 1, PB6/PB7 = Fast 2) so they're configured by
+// setting the FastEncoder PinFunction on those pins via the Pins tab,
+// not here.
+struct EncoderRow {
+    label: string,
+    mode-label: string,
+    mode-index: int,
+}
+
+struct FastEncoderRow {
+    label: string,
+    enabled: bool,
+    mode-label: string,
+    mode-index: int,
+    hint: string,
+}
+
+component EncodersTab inherits Rectangle {
+    in property <[EncoderRow]> soft;
+    in property <[FastEncoderRow]> fast;
+    callback soft-mode-cycled(int);
+    callback fast-enabled-toggled(int);
+    callback fast-mode-cycled(int);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text {
+            text: "Encoders";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Soft encoders wire two button slots (type ENCODER_INPUT_A / B) to a software quadrature decoder. Fast encoders use the F103's hardware timers — pins are silicon-locked (PA8/PA9 = Fast 1, PB6/PB7 = Fast 2) and assigned via the Pins tab.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: "Fast (hardware) encoders";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        for fast-data[i] in root.fast: Rectangle {
+            height: 32px;
+            background: Palette.bg-cell;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 4px;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                Text {
+                    text: fast-data.label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    width: 80px;
+                    vertical-alignment: center;
+                }
+                CheckCell {
+                    label: "Enabled";
+                    checked: fast-data.enabled;
+                    toggled => { root.fast-enabled-toggled(i); }
+                }
+                CycleCell {
+                    label: "mode";
+                    value-label: fast-data.mode-label;
+                    value-width: 50px;
+                    cycled => { root.fast-mode-cycled(i); }
+                }
+                Text {
+                    text: fast-data.hint;
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle { height: 8px; }
+        Text {
+            text: "Soft (software) encoders";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        Flickable {
+            viewport-height: soft.length * 30px;
+            VerticalLayout {
+                spacing: 2px;
+                for soft-data[i] in root.soft: Rectangle {
+                    height: 28px;
+                    background: Palette.bg-cell;
+                    border-color: Palette.border;
+                    border-width: 1px;
+                    border-radius: 3px;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        Text {
+                            text: soft-data.label;
+                            color: Palette.text;
+                            font-size: 12px;
+                            width: 80px;
+                            vertical-alignment: center;
+                        }
+                        CycleCell {
+                            label: "mode";
+                            value-label: soft-data.mode-label;
+                            value-width: 50px;
+                            cycled => { root.soft-mode-cycled(i); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --- Shift Registers tab ----------------------------------------------
+struct ShiftRegRow {
+    label: string,
+    type-label: string,
+    type-index: int,
+    button-count: int,
+}
+
+component ShiftRegsTab inherits Rectangle {
+    in property <[ShiftRegRow]> registers;
+    callback type-cycled(int);
+    callback count-edited(int, int);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text {
+            text: "Shift Registers";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Up to four daisy-chained HC165 or CD4021 shift registers. Latch / data / clock pins are assigned via the Pins tab (ShiftRegLatch / ShiftRegData / ShiftRegClk).";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        for reg-data[i] in root.registers: Rectangle {
+            height: 36px;
+            background: Palette.bg-cell;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 4px;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                Text {
+                    text: reg-data.label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    width: 60px;
+                    vertical-alignment: center;
+                }
+                CycleCell {
+                    label: "type";
+                    value-label: reg-data.type-label;
+                    value-width: 140px;
+                    cycled => { root.type-cycled(i); }
+                }
+                NumberCell {
+                    label: "buttons";
+                    value: reg-data.button-count;
+                    field-width: 56px;
+                    edited(v) => { root.count-edited(i, v); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
 // --- Placeholder tab body for not-yet-implemented surfaces --------------
 component PlaceholderTab inherits Rectangle {
     in property <string> tab-name;
@@ -991,6 +1193,9 @@ export component AppWindow inherits Window {
     in property <[ButtonRow]> buttons: [];
     in property <[ShiftSlot]> shifts: [];
     in property <[TimerField]> timers: [];
+    in property <[EncoderRow]> soft-encoders: [];
+    in property <[FastEncoderRow]> fast-encoders: [];
+    in property <[ShiftRegRow]> shift-registers: [];
 
     callback read-clicked();
     callback write-clicked();
@@ -1018,6 +1223,11 @@ export component AppWindow inherits Window {
     callback button-debounce-cycled(int);
     callback shift-edited(int, int);
     callback timer-edited(int, int);
+    callback soft-encoder-mode-cycled(int);
+    callback fast-encoder-enabled-toggled(int);
+    callback fast-encoder-mode-cycled(int);
+    callback shift-reg-type-cycled(int);
+    callback shift-reg-count-edited(int, int);
 
     in-out property <int> active-tab: 0;
 
@@ -1065,13 +1275,13 @@ export component AppWindow inherits Window {
                 }
                 TabButton {
                     label: "Encoders";
-                    enabled: false;
                     selected: root.active-tab == 4;
+                    clicked => { root.active-tab = 4; }
                 }
                 TabButton {
                     label: "Shift Registers";
-                    enabled: false;
                     selected: root.active-tab == 5;
+                    clicked => { root.active-tab = 5; }
                 }
                 TabButton {
                     label: "Advanced";
@@ -1126,8 +1336,18 @@ export component AppWindow inherits Window {
                 shift-edited(i, v) => { root.shift-edited(i, v); }
                 timer-edited(i, v) => { root.timer-edited(i, v); }
             }
-            if root.active-tab == 4: PlaceholderTab { tab-name: "Encoders"; due: "Slice 8"; }
-            if root.active-tab == 5: PlaceholderTab { tab-name: "Shift Registers"; due: "Slice 8"; }
+            if root.active-tab == 4: EncodersTab {
+                soft: root.soft-encoders;
+                fast: root.fast-encoders;
+                soft-mode-cycled(i) => { root.soft-encoder-mode-cycled(i); }
+                fast-enabled-toggled(i) => { root.fast-encoder-enabled-toggled(i); }
+                fast-mode-cycled(i) => { root.fast-encoder-mode-cycled(i); }
+            }
+            if root.active-tab == 5: ShiftRegsTab {
+                registers: root.shift-registers;
+                type-cycled(i) => { root.shift-reg-type-cycled(i); }
+                count-edited(i, v) => { root.shift-reg-count-edited(i, v); }
+            }
             if root.active-tab == 6: PlaceholderTab { tab-name: "Advanced Settings"; due: "Slice 9"; }
         }
     }

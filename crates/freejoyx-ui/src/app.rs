@@ -29,7 +29,11 @@ use freejoyx_device::{spawn_for_serial, Command, DeviceCandidate, DeviceEvent, D
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::buttons as buttons_glue;
-use crate::{AppWindow, AxisRow, ButtonRow, PinRow, ShiftSlot, TimerField};
+use crate::encoders as encoders_glue;
+use crate::{
+    AppWindow, AxisRow, ButtonRow, EncoderRow, FastEncoderRow, PinRow, ShiftRegRow, ShiftSlot,
+    TimerField,
+};
 
 /// State the UI mutates outside of Slint's reactivity. Held inside a
 /// `RefCell` so callbacks (UI thread) and the event-poll tick (also UI
@@ -88,6 +92,15 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     let timer_model: Rc<VecModel<TimerField>> = Rc::new(VecModel::default());
     window.set_timers(ModelRc::from(timer_model.clone()));
 
+    let soft_encoder_model: Rc<VecModel<EncoderRow>> = Rc::new(VecModel::default());
+    window.set_soft_encoders(ModelRc::from(soft_encoder_model.clone()));
+
+    let fast_encoder_model: Rc<VecModel<FastEncoderRow>> = Rc::new(VecModel::default());
+    window.set_fast_encoders(ModelRc::from(fast_encoder_model.clone()));
+
+    let shift_reg_model: Rc<VecModel<ShiftRegRow>> = Rc::new(VecModel::default());
+    window.set_shift_registers(ModelRc::from(shift_reg_model.clone()));
+
     // Populate function-label list once — it's static.
     let labels: Vec<SharedString> = PinFunction::all()
         .map(|f| SharedString::from(f.label()))
@@ -102,15 +115,27 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     wire_load_callback(
         &window,
         &state,
-        &pin_model,
-        &axis_model,
-        &button_model,
-        &shift_model,
-        &timer_model,
+        &LoadSinks {
+            pin_model: &pin_model,
+            axis_model: &axis_model,
+            button_model: &button_model,
+            shift_model: &shift_model,
+            timer_model: &timer_model,
+            soft_encoder_model: &soft_encoder_model,
+            fast_encoder_model: &fast_encoder_model,
+            shift_reg_model: &shift_reg_model,
+        },
     );
     wire_axis_callbacks(&window, &state, &axis_model);
     wire_pin_callback(&window, &state, &pin_model);
     buttons_glue::wire_callbacks(&window, &state, &button_model, &shift_model, &timer_model);
+    encoders_glue::wire_callbacks(
+        &window,
+        &state,
+        &soft_encoder_model,
+        &fast_encoder_model,
+        &shift_reg_model,
+    );
 
     // Poll the worker's event channel from a Slint timer. 100 ms is
     // brisk enough for connect/disconnect responsiveness without
@@ -124,6 +149,9 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
         let button_model_for_timer = button_model.clone();
         let shift_model_for_timer = shift_model.clone();
         let timer_model_for_timer = timer_model.clone();
+        let soft_encoder_model_for_timer = soft_encoder_model.clone();
+        let fast_encoder_model_for_timer = fast_encoder_model.clone();
+        let shift_reg_model_for_timer = shift_reg_model.clone();
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
@@ -138,6 +166,9 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
                         button_model: &button_model_for_timer,
                         shift_model: &shift_model_for_timer,
                         timer_model: &timer_model_for_timer,
+                        soft_encoder_model: &soft_encoder_model_for_timer,
+                        fast_encoder_model: &fast_encoder_model_for_timer,
+                        shift_reg_model: &shift_reg_model_for_timer,
                     },
                     &rx,
                 );
@@ -158,6 +189,24 @@ struct EventSinks<'a> {
     button_model: &'a Rc<VecModel<ButtonRow>>,
     shift_model: &'a Rc<VecModel<ShiftSlot>>,
     timer_model: &'a Rc<VecModel<TimerField>>,
+    soft_encoder_model: &'a Rc<VecModel<EncoderRow>>,
+    fast_encoder_model: &'a Rc<VecModel<FastEncoderRow>>,
+    shift_reg_model: &'a Rc<VecModel<ShiftRegRow>>,
+}
+
+/// Same shape as [`EventSinks`] but for the load-file callback. Lets
+/// the callback take all eight models without an 11-parameter
+/// function signature.
+#[allow(clippy::struct_field_names)]
+struct LoadSinks<'a> {
+    pin_model: &'a Rc<VecModel<PinRow>>,
+    axis_model: &'a Rc<VecModel<AxisRow>>,
+    button_model: &'a Rc<VecModel<ButtonRow>>,
+    shift_model: &'a Rc<VecModel<ShiftSlot>>,
+    timer_model: &'a Rc<VecModel<TimerField>>,
+    soft_encoder_model: &'a Rc<VecModel<EncoderRow>>,
+    fast_encoder_model: &'a Rc<VecModel<FastEncoderRow>>,
+    shift_reg_model: &'a Rc<VecModel<ShiftRegRow>>,
 }
 
 fn pump_events(
@@ -171,6 +220,9 @@ fn pump_events(
     let button_model = sinks.button_model;
     let shift_model = sinks.shift_model;
     let timer_model = sinks.timer_model;
+    let soft_encoder_model = sinks.soft_encoder_model;
+    let fast_encoder_model = sinks.fast_encoder_model;
+    let shift_reg_model = sinks.shift_reg_model;
     while let Ok(evt) = rx.try_recv() {
         match evt {
             DeviceEvent::Connected(c) => {
@@ -237,6 +289,9 @@ fn pump_events(
                 buttons_glue::refresh_button_model(button_model, &cfg, params_for_buttons.as_ref());
                 buttons_glue::refresh_shift_model(shift_model, &cfg);
                 buttons_glue::refresh_timer_model(timer_model, &cfg);
+                encoders_glue::refresh_soft_encoder_model(soft_encoder_model, &cfg);
+                encoders_glue::refresh_fast_encoder_model(fast_encoder_model, &cfg);
+                encoders_glue::refresh_shift_reg_model(shift_reg_model, &cfg);
             }
             DeviceEvent::ConfigSent => {
                 let mut s = state.borrow_mut();
@@ -356,23 +411,17 @@ fn wire_save_callback(window: &AppWindow, state: &Rc<RefCell<State>>) {
     });
 }
 
-#[allow(clippy::too_many_arguments)]
-fn wire_load_callback(
-    window: &AppWindow,
-    state: &Rc<RefCell<State>>,
-    pin_model: &Rc<VecModel<PinRow>>,
-    axis_model: &Rc<VecModel<AxisRow>>,
-    button_model: &Rc<VecModel<ButtonRow>>,
-    shift_model: &Rc<VecModel<ShiftSlot>>,
-    timer_model: &Rc<VecModel<TimerField>>,
-) {
+fn wire_load_callback(window: &AppWindow, state: &Rc<RefCell<State>>, sinks: &LoadSinks<'_>) {
     let state = state.clone();
     let weak = window.as_weak();
-    let pin_model = pin_model.clone();
-    let axis_model = axis_model.clone();
-    let button_model = button_model.clone();
-    let shift_model = shift_model.clone();
-    let timer_model = timer_model.clone();
+    let pin_model = sinks.pin_model.clone();
+    let axis_model = sinks.axis_model.clone();
+    let button_model = sinks.button_model.clone();
+    let shift_model = sinks.shift_model.clone();
+    let timer_model = sinks.timer_model.clone();
+    let soft_encoder_model = sinks.soft_encoder_model.clone();
+    let fast_encoder_model = sinks.fast_encoder_model.clone();
+    let shift_reg_model = sinks.shift_reg_model.clone();
     window.on_load_clicked(move || {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("FreeJoyX RON", &["ron"])
@@ -404,6 +453,9 @@ fn wire_load_callback(
                 );
                 buttons_glue::refresh_shift_model(&shift_model, &cfg_for_model);
                 buttons_glue::refresh_timer_model(&timer_model, &cfg_for_model);
+                encoders_glue::refresh_soft_encoder_model(&soft_encoder_model, &cfg_for_model);
+                encoders_glue::refresh_fast_encoder_model(&fast_encoder_model, &cfg_for_model);
+                encoders_glue::refresh_shift_reg_model(&shift_reg_model, &cfg_for_model);
                 if let Some(w) = weak.upgrade() {
                     w.set_can_save(true);
                     let connected = w.get_connected();
