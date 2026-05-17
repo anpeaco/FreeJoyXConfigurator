@@ -22,13 +22,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use freejoyx_core::domain::{validate_pins, Board, PinConflict, PinFunction};
+use freejoyx_core::domain::{validate_pins, AxisFilter, Board, PinConflict, PinFunction};
 use freejoyx_core::persist::{load_from_file, save_to_file};
-use freejoyx_core::wire::{DeviceConfig, USED_PINS_NUM};
+use freejoyx_core::wire::{DeviceConfig, ParamsReport, MAX_AXIS_NUM, USED_PINS_NUM};
 use freejoyx_device::{spawn_for_serial, Command, DeviceCandidate, DeviceEvent, DeviceHandle};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::{AppWindow, PinRow};
+use crate::{AppWindow, AxisRow, PinRow};
 
 /// State the UI mutates outside of Slint's reactivity. Held inside a
 /// `RefCell` so callbacks (UI thread) and the event-poll tick (also UI
@@ -39,6 +39,10 @@ struct State {
     last_config: Option<Box<DeviceConfig>>,
     board: Board,
     status: String,
+    /// Most recent params snapshot. Drives the live raw/out columns on
+    /// the Axes tab; `None` until the worker has shipped at least one
+    /// `ParamsTick`.
+    last_params: Option<ParamsReport>,
 }
 
 impl State {
@@ -49,6 +53,7 @@ impl State {
             last_config: None,
             board: Board::Bluepill,
             status: "waiting for device…".to_string(),
+            last_params: None,
         }
     }
 }
@@ -70,6 +75,9 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
     let pin_model: Rc<VecModel<PinRow>> = Rc::new(VecModel::default());
     window.set_pins(ModelRc::from(pin_model.clone()));
 
+    let axis_model: Rc<VecModel<AxisRow>> = Rc::new(VecModel::default());
+    window.set_axes(ModelRc::from(axis_model.clone()));
+
     // Populate function-label list once — it's static.
     let labels: Vec<SharedString> = PinFunction::all()
         .map(|f| SharedString::from(f.label()))
@@ -78,78 +86,12 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
 
     let state = Rc::new(RefCell::new(State::new(handle)));
 
-    // Wire UI callbacks.
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_read_clicked(move || {
-            let mut s = state.borrow_mut();
-            if s.handle.send(Command::ReadConfig).is_err() {
-                s.status = "worker exited; cannot read".to_string();
-            } else {
-                s.status = "reading config…".to_string();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_status_text(SharedString::from(s.status.clone()));
-            }
-        });
-    }
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        window.on_write_clicked(move || {
-            let mut s = state.borrow_mut();
-            let Some(cfg) = s.last_config.clone() else {
-                s.status = "no config loaded yet — read first".to_string();
-                if let Some(w) = weak.upgrade() {
-                    w.set_status_text(SharedString::from(s.status.clone()));
-                }
-                return;
-            };
-            if s.handle.send(Command::WriteConfig(cfg)).is_err() {
-                s.status = "worker exited; cannot write".to_string();
-            } else {
-                s.status = "writing config…".to_string();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_status_text(SharedString::from(s.status.clone()));
-            }
-        });
-    }
+    wire_read_callback(&window, &state);
+    wire_write_callback(&window, &state);
     wire_save_callback(&window, &state);
-    wire_load_callback(&window, &state, &pin_model);
-    {
-        let state = state.clone();
-        let weak = window.as_weak();
-        let pin_model = pin_model.clone();
-        window.on_pin_changed(move |slot, function_index| {
-            let Ok(slot) = usize::try_from(slot) else {
-                return;
-            };
-            let Ok(function_index) = usize::try_from(function_index) else {
-                return;
-            };
-            if slot >= USED_PINS_NUM {
-                return;
-            }
-            let Some(new_fn) = PinFunction::all().nth(function_index) else {
-                return;
-            };
-            let (board, cfg_clone) = {
-                let mut s = state.borrow_mut();
-                let board = s.board;
-                let Some(cfg) = s.last_config.as_mut() else {
-                    return;
-                };
-                cfg.pins[slot] = new_fn.to_i8();
-                (board, cfg.clone())
-            };
-            refresh_pin_model(&pin_model, &cfg_clone, board);
-            if let Some(w) = weak.upgrade() {
-                w.set_can_write(true);
-            }
-        });
-    }
+    wire_load_callback(&window, &state, &pin_model, &axis_model);
+    wire_axis_callbacks(&window, &state, &axis_model);
+    wire_pin_callback(&window, &state, &pin_model);
 
     // Poll the worker's event channel from a Slint timer. 100 ms is
     // brisk enough for connect/disconnect responsiveness without
@@ -159,12 +101,19 @@ pub fn run(serial_filter: Option<String>) -> Result<(), slint::PlatformError> {
         let state = state.clone();
         let weak = window.as_weak();
         let pin_model_for_timer = pin_model.clone();
+        let axis_model_for_timer = axis_model.clone();
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(100),
             move || {
                 let Some(window) = weak.upgrade() else { return };
-                pump_events(&state, &window, &pin_model_for_timer, &rx);
+                pump_events(
+                    &state,
+                    &window,
+                    &pin_model_for_timer,
+                    &axis_model_for_timer,
+                    &rx,
+                );
             },
         );
     }
@@ -176,6 +125,7 @@ fn pump_events(
     state: &Rc<RefCell<State>>,
     window: &AppWindow,
     pin_model: &Rc<VecModel<PinRow>>,
+    axis_model: &Rc<VecModel<AxisRow>>,
     rx: &std::sync::mpsc::Receiver<DeviceEvent>,
 ) {
     while let Ok(evt) = rx.try_recv() {
@@ -200,9 +150,17 @@ fn pump_events(
                 window.set_can_read(false);
                 window.set_can_write(false);
             }
-            DeviceEvent::ParamsTick(_) => {
-                // Slice 5 doesn't surface live params. Slice 6's Axes
-                // tab will bind to this.
+            DeviceEvent::ParamsTick(p) => {
+                let (cfg_opt, raw, processed) = {
+                    let mut s = state.borrow_mut();
+                    let raw = p.raw_axis_data;
+                    let processed = p.axis_data;
+                    s.last_params = Some(p);
+                    (s.last_config.clone(), raw, processed)
+                };
+                if let Some(cfg) = cfg_opt {
+                    refresh_axis_model(axis_model, &cfg, Some((raw, processed)));
+                }
             }
             DeviceEvent::ConfigReceived(cfg) => {
                 let mut s = state.borrow_mut();
@@ -215,11 +173,16 @@ fn pump_events(
                     cfg.pins.iter().filter(|&&p| p != 0).count()
                 );
                 let board = s.board;
+                let live = s
+                    .last_params
+                    .as_ref()
+                    .map(|p| (p.raw_axis_data, p.axis_data));
                 window.set_status_text(SharedString::from(s.status.clone()));
                 window.set_can_write(true);
                 window.set_can_save(true);
                 drop(s);
                 refresh_pin_model(pin_model, &cfg, board);
+                refresh_axis_model(axis_model, &cfg, live);
             }
             DeviceEvent::ConfigSent => {
                 let mut s = state.borrow_mut();
@@ -238,6 +201,82 @@ fn pump_events(
             }
         }
     }
+}
+
+fn wire_read_callback(window: &AppWindow, state: &Rc<RefCell<State>>) {
+    let state = state.clone();
+    let weak = window.as_weak();
+    window.on_read_clicked(move || {
+        let mut s = state.borrow_mut();
+        if s.handle.send(Command::ReadConfig).is_err() {
+            s.status = "worker exited; cannot read".to_string();
+        } else {
+            s.status = "reading config…".to_string();
+        }
+        if let Some(w) = weak.upgrade() {
+            w.set_status_text(SharedString::from(s.status.clone()));
+        }
+    });
+}
+
+fn wire_write_callback(window: &AppWindow, state: &Rc<RefCell<State>>) {
+    let state = state.clone();
+    let weak = window.as_weak();
+    window.on_write_clicked(move || {
+        let mut s = state.borrow_mut();
+        let Some(cfg) = s.last_config.clone() else {
+            s.status = "no config loaded yet — read first".to_string();
+            if let Some(w) = weak.upgrade() {
+                w.set_status_text(SharedString::from(s.status.clone()));
+            }
+            return;
+        };
+        if s.handle.send(Command::WriteConfig(cfg)).is_err() {
+            s.status = "worker exited; cannot write".to_string();
+        } else {
+            s.status = "writing config…".to_string();
+        }
+        if let Some(w) = weak.upgrade() {
+            w.set_status_text(SharedString::from(s.status.clone()));
+        }
+    });
+}
+
+fn wire_pin_callback(
+    window: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    pin_model: &Rc<VecModel<PinRow>>,
+) {
+    let state = state.clone();
+    let weak = window.as_weak();
+    let pin_model = pin_model.clone();
+    window.on_pin_changed(move |slot, function_index| {
+        let Ok(slot) = usize::try_from(slot) else {
+            return;
+        };
+        let Ok(function_index) = usize::try_from(function_index) else {
+            return;
+        };
+        if slot >= USED_PINS_NUM {
+            return;
+        }
+        let Some(new_fn) = PinFunction::all().nth(function_index) else {
+            return;
+        };
+        let (board, cfg_clone) = {
+            let mut s = state.borrow_mut();
+            let board = s.board;
+            let Some(cfg) = s.last_config.as_mut() else {
+                return;
+            };
+            cfg.pins[slot] = new_fn.to_i8();
+            (board, cfg.clone())
+        };
+        refresh_pin_model(&pin_model, &cfg_clone, board);
+        if let Some(w) = weak.upgrade() {
+            w.set_can_write(true);
+        }
+    });
 }
 
 fn wire_save_callback(window: &AppWindow, state: &Rc<RefCell<State>>) {
@@ -267,10 +306,12 @@ fn wire_load_callback(
     window: &AppWindow,
     state: &Rc<RefCell<State>>,
     pin_model: &Rc<VecModel<PinRow>>,
+    axis_model: &Rc<VecModel<AxisRow>>,
 ) {
     let state = state.clone();
     let weak = window.as_weak();
     let pin_model = pin_model.clone();
+    let axis_model = axis_model.clone();
     window.on_load_clicked(move || {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("FreeJoyX RON", &["ron"])
@@ -280,15 +321,20 @@ fn wire_load_callback(
         };
         match load_from_file(&path) {
             Ok(cfg) => {
-                let (board, cfg_for_model) = {
+                let (board, cfg_for_model, live) = {
                     let mut s = state.borrow_mut();
                     let board = Board::from_id(cfg.board_id);
                     s.board = board;
                     let cfg_box = Box::new(cfg);
                     s.last_config = Some(cfg_box.clone());
-                    (board, cfg_box)
+                    let live = s
+                        .last_params
+                        .as_ref()
+                        .map(|p| (p.raw_axis_data, p.axis_data));
+                    (board, cfg_box, live)
                 };
                 refresh_pin_model(&pin_model, &cfg_for_model, board);
+                refresh_axis_model(&axis_model, &cfg_for_model, live);
                 if let Some(w) = weak.upgrade() {
                     w.set_can_save(true);
                     let connected = w.get_connected();
@@ -301,6 +347,98 @@ fn wire_load_callback(
     });
 }
 
+/// Wire all axis-edit callbacks. Each mutates the held config and
+/// refreshes only the touched row in the axis model so the rest of
+/// the in-progress UI (`TextInput` focus, in particular) doesn't lose
+/// its place to a wholesale model rebuild.
+#[allow(clippy::too_many_lines)]
+fn wire_axis_callbacks(
+    window: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    axis_model: &Rc<VecModel<AxisRow>>,
+) {
+    let mk_toggle = |cb: fn(&mut freejoyx_core::wire::AxisConfig)| {
+        let s = state.clone();
+        let m = axis_model.clone();
+        let w = window.as_weak();
+        move |slot: i32| {
+            mutate_axis(&s, &m, &w, slot, cb);
+        }
+    };
+    let mk_int = |cb: fn(&mut freejoyx_core::wire::AxisConfig, i32)| {
+        let s = state.clone();
+        let m = axis_model.clone();
+        let w = window.as_weak();
+        move |slot: i32, v: i32| {
+            mutate_axis(&s, &m, &w, slot, move |a| cb(a, v));
+        }
+    };
+
+    window.on_axis_out_toggled(mk_toggle(|a| a.set_out_enabled(!a.out_enabled())));
+    window.on_axis_inverted_toggled(mk_toggle(|a| a.set_inverted(!a.inverted())));
+    window.on_axis_centered_toggled(mk_toggle(|a| a.set_is_centered(!a.is_centered())));
+    window.on_axis_dyn_deadband_toggled(mk_toggle(|a| {
+        a.set_is_dynamic_deadband(!a.is_dynamic_deadband());
+    }));
+    window.on_axis_filter_cycled(mk_toggle(|a| {
+        a.set_filter((a.filter() + 1) % 8);
+    }));
+    window.on_axis_resolution_cycled(mk_toggle(|a| {
+        a.set_resolution((a.resolution() + 1) % 16);
+    }));
+    window.on_axis_channel_cycled(mk_toggle(|a| {
+        a.set_channel((a.channel() + 1) % 16);
+    }));
+
+    window.on_axis_calib_min_edited(mk_int(|a, v| a.calib_min = clamp_i16(v)));
+    window.on_axis_calib_center_edited(mk_int(|a, v| a.calib_center = clamp_i16(v)));
+    window.on_axis_calib_max_edited(mk_int(|a, v| a.calib_max = clamp_i16(v)));
+    window.on_axis_deadband_edited(mk_int(|a, v| {
+        a.set_deadband_size(u8::try_from(v.clamp(0, 127)).unwrap_or(0));
+    }));
+}
+
+fn mutate_axis(
+    state: &Rc<RefCell<State>>,
+    axis_model: &Rc<VecModel<AxisRow>>,
+    window: &slint::Weak<AppWindow>,
+    slot: i32,
+    mutator: impl FnOnce(&mut freejoyx_core::wire::AxisConfig),
+) {
+    let Ok(slot) = usize::try_from(slot) else {
+        return;
+    };
+    if slot >= MAX_AXIS_NUM {
+        return;
+    }
+    let row = {
+        let mut s = state.borrow_mut();
+        if s.last_config.is_none() {
+            return;
+        }
+        let live_raw = s
+            .last_params
+            .as_ref()
+            .map_or(0, |p| i32::from(p.raw_axis_data[slot]));
+        let live_out = s
+            .last_params
+            .as_ref()
+            .map_or(0, |p| i32::from(p.axis_data[slot]));
+        let cfg = s.last_config.as_mut().expect("checked is_none above");
+        mutator(&mut cfg.axis_config[slot]);
+        build_axis_row(slot, &cfg.axis_config[slot], live_raw, live_out)
+    };
+    axis_model.set_row_data(slot, row);
+    if let Some(w) = window.upgrade() {
+        w.set_can_write(w.get_connected());
+        w.set_can_save(true);
+    }
+}
+
+fn clamp_i16(v: i32) -> i16 {
+    i16::try_from(v.clamp(i32::from(i16::MIN), i32::from(i16::MAX))).unwrap_or(0)
+}
+
 fn set_status(weak: &slint::Weak<AppWindow>, state: &Rc<RefCell<State>>, msg: &str) {
     {
         let mut s = state.borrow_mut();
@@ -308,6 +446,59 @@ fn set_status(weak: &slint::Weak<AppWindow>, state: &Rc<RefCell<State>>, msg: &s
     }
     if let Some(w) = weak.upgrade() {
         w.set_status_text(SharedString::from(msg));
+    }
+}
+
+fn refresh_axis_model(
+    model: &Rc<VecModel<AxisRow>>,
+    cfg: &DeviceConfig,
+    live: Option<([i16; MAX_AXIS_NUM], [i16; MAX_AXIS_NUM])>,
+) {
+    let params_ref = live;
+    // Initial build (or wholesale repopulate after a load/read).
+    if model.row_count() != MAX_AXIS_NUM {
+        while model.row_count() > 0 {
+            model.remove(0);
+        }
+        for slot in 0..MAX_AXIS_NUM {
+            let raw = params_ref.map_or(0, |(raw, _)| i32::from(raw[slot]));
+            let out = params_ref.map_or(0, |(_, out)| i32::from(out[slot]));
+            model.push(build_axis_row(slot, &cfg.axis_config[slot], raw, out));
+        }
+        return;
+    }
+    // Per-row update (live tick path or per-edit refresh).
+    for slot in 0..MAX_AXIS_NUM {
+        let raw = params_ref.map_or(0, |(raw, _)| i32::from(raw[slot]));
+        let out = params_ref.map_or(0, |(_, out)| i32::from(out[slot]));
+        let row = build_axis_row(slot, &cfg.axis_config[slot], raw, out);
+        model.set_row_data(slot, row);
+    }
+}
+
+fn build_axis_row(
+    slot: usize,
+    a: &freejoyx_core::wire::AxisConfig,
+    live_raw: i32,
+    live_out: i32,
+) -> AxisRow {
+    let filter = AxisFilter::from_u8(a.filter());
+    AxisRow {
+        title: SharedString::from(format!("Axis {}", slot + 1)),
+        out_enabled: a.out_enabled(),
+        inverted: a.inverted(),
+        is_centered: a.is_centered(),
+        calib_min: i32::from(a.calib_min),
+        calib_center: i32::from(a.calib_center),
+        calib_max: i32::from(a.calib_max),
+        filter_index: i32::from(filter.to_u8()),
+        filter_label: SharedString::from(filter.label()),
+        deadband_size: i32::from(a.deadband_size()),
+        is_dynamic_deadband: a.is_dynamic_deadband(),
+        resolution: i32::from(a.resolution()),
+        channel: i32::from(a.channel()),
+        live_raw,
+        live_out,
     }
 }
 

@@ -235,6 +235,332 @@ component PinsTab inherits Rectangle {
     }
 }
 
+// --- Axes tab ----------------------------------------------------------
+//
+// One row per axis (8 axes). The form surfaces only the v0.1 controls
+// (Port.md §5 Slice 6): output / inverted / centered toggles,
+// calibration min/center/max, filter level, deadband, resolution,
+// channel. Sensor + axis-to-buttons stay raw in the codec for v0.1.
+struct AxisRow {
+    title: string,
+    out-enabled: bool,
+    inverted: bool,
+    is-centered: bool,
+    calib-min: int,
+    calib-center: int,
+    calib-max: int,
+    filter-index: int,
+    filter-label: string,
+    deadband-size: int,
+    is-dynamic-deadband: bool,
+    resolution: int,
+    channel: int,
+    live-raw: int,
+    live-out: int,
+}
+
+component CheckCell inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked;
+    callback toggled();
+
+    height: 26px;
+    min-width: 70px;
+    background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
+    border-color: root.checked ? Palette.accent : Palette.border;
+    border-width: 1px;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+        alignment: center;
+        Rectangle {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            border-color: Palette.border;
+            border-width: 1px;
+            background: root.checked ? Palette.accent : transparent;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            color: Palette.text;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => { root.toggled(); }
+    }
+}
+
+component NumberCell inherits Rectangle {
+    in property <string> label;
+    in property <int> value;
+    in property <length> field-width: 70px;
+    callback edited(int);
+
+    height: 26px;
+    min-width: 110px;
+
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+
+        Text {
+            text: root.label;
+            color: Palette.text-dim;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            width: root.field-width;
+            height: 22px;
+            background: Palette.bg-cell-alt;
+            border-color: ti.has-focus ? Palette.accent : Palette.border;
+            border-width: 1px;
+            border-radius: 3px;
+            y: (parent.height - self.height) / 2;
+
+            ti := TextInput {
+                text: root.value;
+                color: Palette.text;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                input-type: number;
+                width: parent.width - 8px;
+                x: 4px;
+                edited => {
+                    if (self.text == "" || self.text == "-") {
+                        return;
+                    }
+                    root.edited(self.text.to-float());
+                }
+                accepted => { self.clear-focus(); }
+            }
+        }
+    }
+}
+
+component CycleCell inherits Rectangle {
+    in property <string> label;
+    in property <string> value-label;
+    in property <length> value-width: 100px;
+    callback cycled();
+
+    height: 26px;
+
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+        Text {
+            text: root.label;
+            color: Palette.text-dim;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: root.value-width;
+            height: 22px;
+            background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 3px;
+            y: (parent.height - self.height) / 2;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                Text {
+                    text: root.value-label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            ta := TouchArea {
+                clicked => { root.cycled(); }
+            }
+        }
+    }
+}
+
+component AxisRowView inherits Rectangle {
+    in property <AxisRow> entry;
+    in property <int> slot;
+    callback out-toggled(int);
+    callback inverted-toggled(int);
+    callback centered-toggled(int);
+    callback calib-min-edited(int, int);
+    callback calib-center-edited(int, int);
+    callback calib-max-edited(int, int);
+    callback filter-cycled(int);
+    callback deadband-edited(int, int);
+    callback dyn-deadband-toggled(int);
+    callback resolution-cycled(int);
+    callback channel-cycled(int);
+
+    height: 110px;
+    background: Palette.bg-cell;
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 4px;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                text: root.entry.title;
+                color: Palette.accent;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+                width: 70px;
+            }
+            CheckCell {
+                label: "Output";
+                checked: root.entry.out-enabled;
+                toggled => { root.out-toggled(root.slot); }
+            }
+            CheckCell {
+                label: "Inverted";
+                checked: root.entry.inverted;
+                toggled => { root.inverted-toggled(root.slot); }
+            }
+            CheckCell {
+                label: "Centered";
+                checked: root.entry.is-centered;
+                toggled => { root.centered-toggled(root.slot); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: "raw " + root.entry.live-raw + "    out " + root.entry.live-out;
+                color: Palette.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            NumberCell {
+                label: "min";
+                value: root.entry.calib-min;
+                field-width: 60px;
+                edited(v) => { root.calib-min-edited(root.slot, v); }
+            }
+            NumberCell {
+                label: "ctr";
+                value: root.entry.calib-center;
+                field-width: 60px;
+                edited(v) => { root.calib-center-edited(root.slot, v); }
+            }
+            NumberCell {
+                label: "max";
+                value: root.entry.calib-max;
+                field-width: 60px;
+                edited(v) => { root.calib-max-edited(root.slot, v); }
+            }
+            CycleCell {
+                label: "filter";
+                value-label: root.entry.filter-label;
+                value-width: 76px;
+                cycled => { root.filter-cycled(root.slot); }
+            }
+            NumberCell {
+                label: "dead";
+                value: root.entry.deadband-size;
+                field-width: 48px;
+                edited(v) => { root.deadband-edited(root.slot, v); }
+            }
+            CheckCell {
+                label: "Dyn";
+                checked: root.entry.is-dynamic-deadband;
+                toggled => { root.dyn-deadband-toggled(root.slot); }
+            }
+            CycleCell {
+                label: "res";
+                value-label: root.entry.resolution;
+                value-width: 36px;
+                cycled => { root.resolution-cycled(root.slot); }
+            }
+            CycleCell {
+                label: "ch";
+                value-label: root.entry.channel;
+                value-width: 36px;
+                cycled => { root.channel-cycled(root.slot); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+}
+
+component AxesTab inherits Rectangle {
+    in property <[AxisRow]> axes;
+    callback out-toggled(int);
+    callback inverted-toggled(int);
+    callback centered-toggled(int);
+    callback calib-min-edited(int, int);
+    callback calib-center-edited(int, int);
+    callback calib-max-edited(int, int);
+    callback filter-cycled(int);
+    callback deadband-edited(int, int);
+    callback dyn-deadband-toggled(int);
+    callback resolution-cycled(int);
+    callback channel-cycled(int);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+
+        Text {
+            text: "Axes";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Linear calibration, filter, deadband, resolution, channel. Live raw and processed values stream from the device.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        Flickable {
+            viewport-height: axes.length * 116px;
+            VerticalLayout {
+                spacing: 4px;
+                for axis-data[i] in root.axes: AxisRowView {
+                    entry: axis-data;
+                    slot: i;
+                    out-toggled(s) => { root.out-toggled(s); }
+                    inverted-toggled(s) => { root.inverted-toggled(s); }
+                    centered-toggled(s) => { root.centered-toggled(s); }
+                    calib-min-edited(s, v) => { root.calib-min-edited(s, v); }
+                    calib-center-edited(s, v) => { root.calib-center-edited(s, v); }
+                    calib-max-edited(s, v) => { root.calib-max-edited(s, v); }
+                    filter-cycled(s) => { root.filter-cycled(s); }
+                    deadband-edited(s, v) => { root.deadband-edited(s, v); }
+                    dyn-deadband-toggled(s) => { root.dyn-deadband-toggled(s); }
+                    resolution-cycled(s) => { root.resolution-cycled(s); }
+                    channel-cycled(s) => { root.channel-cycled(s); }
+                }
+            }
+        }
+    }
+}
+
 // --- Placeholder tab body for not-yet-implemented surfaces --------------
 component PlaceholderTab inherits Rectangle {
     in property <string> tab-name;
@@ -340,12 +666,24 @@ export component AppWindow inherits Window {
     in property <bool> can-save: false;
     in property <[PinRow]> pins: [];
     in property <[string]> function-labels: [];
+    in property <[AxisRow]> axes: [];
 
     callback read-clicked();
     callback write-clicked();
     callback save-clicked();
     callback load-clicked();
     callback pin-changed(int, int);
+    callback axis-out-toggled(int);
+    callback axis-inverted-toggled(int);
+    callback axis-centered-toggled(int);
+    callback axis-calib-min-edited(int, int);
+    callback axis-calib-center-edited(int, int);
+    callback axis-calib-max-edited(int, int);
+    callback axis-filter-cycled(int);
+    callback axis-deadband-edited(int, int);
+    callback axis-dyn-deadband-toggled(int);
+    callback axis-resolution-cycled(int);
+    callback axis-channel-cycled(int);
 
     in-out property <int> active-tab: 0;
 
@@ -378,8 +716,8 @@ export component AppWindow inherits Window {
                 }
                 TabButton {
                     label: "Axes";
-                    enabled: false;
                     selected: root.active-tab == 1;
+                    clicked => { root.active-tab = 1; }
                 }
                 TabButton {
                     label: "Buttons + Logic";
@@ -423,7 +761,20 @@ export component AppWindow inherits Window {
                 function-labels: root.function-labels;
                 pin-changed(slot, fn) => { root.pin-changed(slot, fn); }
             }
-            if root.active-tab == 1: PlaceholderTab { tab-name: "Axes"; due: "Slice 6"; }
+            if root.active-tab == 1: AxesTab {
+                axes: root.axes;
+                out-toggled(s) => { root.axis-out-toggled(s); }
+                inverted-toggled(s) => { root.axis-inverted-toggled(s); }
+                centered-toggled(s) => { root.axis-centered-toggled(s); }
+                calib-min-edited(s, v) => { root.axis-calib-min-edited(s, v); }
+                calib-center-edited(s, v) => { root.axis-calib-center-edited(s, v); }
+                calib-max-edited(s, v) => { root.axis-calib-max-edited(s, v); }
+                filter-cycled(s) => { root.axis-filter-cycled(s); }
+                deadband-edited(s, v) => { root.axis-deadband-edited(s, v); }
+                dyn-deadband-toggled(s) => { root.axis-dyn-deadband-toggled(s); }
+                resolution-cycled(s) => { root.axis-resolution-cycled(s); }
+                channel-cycled(s) => { root.axis-channel-cycled(s); }
+            }
             if root.active-tab == 2: PlaceholderTab { tab-name: "Buttons + Logic"; due: "Slice 7"; }
             if root.active-tab == 3: PlaceholderTab { tab-name: "Shifts & Timers"; due: "Slice 7"; }
             if root.active-tab == 4: PlaceholderTab { tab-name: "Encoders"; due: "Slice 8"; }
