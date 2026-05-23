@@ -571,7 +571,7 @@ mod pump_tests {
     //! Tests for the pump loop in isolation from `hidapi`. Drives
     //! `pump_until_disconnect` against a scriptable
     //! [`super::Transport`] fake — verifies command interleaving,
-    //! disconnect handling, and the ReadConfig / WriteConfig
+    //! disconnect handling, and the `ReadConfig` / `WriteConfig`
     //! round-trip without a real device.
     //!
     //! What's *not* covered here: device enumeration + `Device::open`.
@@ -594,6 +594,7 @@ mod pump_tests {
         Params(ParamsReport),
         /// Return `TransportError::Timeout` — caller should treat as
         /// idle, not disconnect.
+        #[allow(dead_code)] // reserved for upcoming idle/disconnect-distinction tests
         Timeout,
         /// Return a `TransportError::Read` — caller should treat as
         /// disconnect.
@@ -630,6 +631,7 @@ mod pump_tests {
         fn set_write_config(&self, r: Result<(), TransportError>) {
             *self.write_config_result.lock().unwrap() = Some(r);
         }
+        #[allow(dead_code)] // reserved for upcoming command-trace assertions in tests
         fn events(&self) -> Vec<FakeCall> {
             std::mem::take(&mut *self.events.lock().unwrap())
         }
@@ -683,7 +685,7 @@ mod pump_tests {
 
     /// Drive `pump_until_disconnect` in a background thread so the
     /// test can feed it commands and reads. Returns the worker thread's
-    /// JoinHandle (carrying the `PumpOutcome`) plus the cmd sender and
+    /// `JoinHandle` (carrying the `PumpOutcome`) plus the cmd sender and
     /// evt receiver.
     fn spawn_pump(
         mut fake: FakeTransport,

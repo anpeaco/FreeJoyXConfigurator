@@ -89,9 +89,9 @@ pub fn refresh_pin_model(model: &Rc<VecModel<PinRow>>, cfg: &DeviceConfig, board
 }
 
 /// True when a pin function maps to a per-row destination on another
-/// tab. AxisAnalog / FastEncoder go to the Axes tab; ShiftRegData
-/// maps to a specific shift-register slot. ShiftRegLatch and
-/// ShiftRegClk are shared across every chain (one of each, reused
+/// tab. `AxisAnalog` / `FastEncoder` go to the Axes tab; `ShiftRegData`
+/// maps to a specific shift-register slot. `ShiftRegLatch` and
+/// `ShiftRegClk` are shared across every chain (one of each, reused
 /// by all enabled SRs), so they don't carry a unique target.
 fn function_jump_eligible(f: PinFunction) -> bool {
     matches!(
@@ -101,7 +101,7 @@ fn function_jump_eligible(f: PinFunction) -> bool {
 }
 
 /// Pin-jump target resolved from a wire slot and the in-memory config.
-/// Tab index uses AppWindow's active-tab convention (1 = Axes,
+/// Tab index uses `AppWindow`'s active-tab convention (1 = Axes,
 /// 5 = Shift Registers).
 #[derive(Debug, Clone, Copy)]
 pub struct PinJumpTarget {
@@ -111,7 +111,7 @@ pub struct PinJumpTarget {
 
 /// Resolve `pins[wire_slot]` → which tab and which row to flash /
 /// scroll to. Returns None when the pin isn't currently mapped to
-/// any row (e.g. an AxisAnalog pin that no axis has picked yet) —
+/// any row (e.g. an `AxisAnalog` pin that no axis has picked yet) —
 /// the UI surfaces that as a disabled jump button.
 ///
 /// - `AxisAnalog` → first axis whose `source_main` matches `wire_slot`.
@@ -165,7 +165,7 @@ pub fn pin_jump_target(cfg: &DeviceConfig, wire_slot: usize) -> Option<PinJumpTa
 /// The firmware walks `pins[]` in array order and assigns each
 /// `ShiftRegData` it encounters to the next shift-register slot
 /// (`shift_registers.c:56-58`). Mirror that here: the ordinal of
-/// `wire_slot` among ShiftRegData pins is the SR slot it drives.
+/// `wire_slot` among `ShiftRegData` pins is the SR slot it drives.
 /// Returns None if `wire_slot` isn't a Data pin or the ordinal
 /// exceeds `MAX_SHIFT_REG_NUM`.
 fn shift_register_slot_for_data_pin(pins: &[i8], wire_slot: usize) -> Option<usize> {
@@ -191,7 +191,7 @@ fn shift_register_slot_for_data_pin(pins: &[i8], wire_slot: usize) -> Option<usi
 /// can hop from an Axis row back to its source pin on the Pins tab).
 ///
 /// - `AxisSource::Pin(N)` → `Some(N)` if pin N currently carries
-///   AxisAnalog; otherwise None (the source field outlived the pin
+///   `AxisAnalog`; otherwise None (the source field outlived the pin
 ///   role).
 /// - `AxisSource::Encoder(N)` → the first `FastEncoder`-assigned pin
 ///   in the encoder's pin pair (PA8 for slot 0, PB6 for slot 1).

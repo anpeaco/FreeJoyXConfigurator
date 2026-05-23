@@ -19,7 +19,18 @@
 // if it ever needs to without touching this attribute.
 #![deny(unsafe_code)]
 #![warn(clippy::pedantic)]
-#![allow(clippy::similar_names)] // pin-row variables are intentionally close
+#![allow(clippy::similar_names)]
+// pin-row variables are intentionally close
+// Allowed pedantic lints in the WIP UI code -- these are not bugs, they're
+// style/perf suggestions that don't fit how the Slint callbacks are shaped:
+#![allow(clippy::cast_precision_loss)] // usize -> f32 for slot indices
+#![allow(clippy::cast_sign_loss)] // i8/i32 -> usize for pin IDs
+#![allow(clippy::cast_possible_truncation)] // narrowing widget-sized indices
+#![allow(clippy::needless_range_loop)] // `for slot in 0..N` mirrors firmware loops
+#![allow(clippy::trivially_copy_pass_by_ref)] // matches Slint callback signatures
+#![allow(clippy::too_many_lines)] // UI builders are long by nature
+#![allow(clippy::manual_let_else)] // legibility judgment call
+#![allow(clippy::empty_line_after_doc_comments)] // stylistic; deferred
 
 pub mod app;
 pub mod debug_log;

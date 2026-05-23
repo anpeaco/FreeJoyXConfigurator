@@ -54,18 +54,18 @@ use crate::{
 /// no-source rows shrink to the header-only height, configured rows
 /// expand to the full body.
 const AXIS_ROW_COLLAPSED_PX: f32 = 48.0;
-/// Phase 4 added the CalibRangeBar (10 px + 6 px gap) between the
+/// Phase 4 added the `CalibRangeBar` (10 px + 6 px gap) between the
 /// bars-cluster row and the min/ctr/max number row; bump up by 16 px so
 /// the existing rows don't get squeezed. Keep in sync with the
 /// `has-source ? ... : 48px` height expression in `axis_row_view.slint`.
 const AXIS_ROW_EXPANDED_PX: f32 = 188.0;
-/// Extended-settings panel: two columns (Function group / Function-axis
-/// + Prescaler + Offset) on top, a 4-px spacer, then three Button-N
-/// rows. Each row is ~28 px with 6 px spacing; bump this if more rows
-/// land on the panel. Keep in lockstep with the `if entry.extended-expanded:`
+/// Extended-settings panel: two columns (Function group / Function-axis,
+/// Prescaler, Offset) on top, a 4-px spacer, then three Button-N rows.
+/// Each row is ~28 px with 6 px spacing; bump this if more rows land on
+/// the panel. Keep in lockstep with the `if entry.extended-expanded:`
 /// height arithmetic in `axis_row_view.slint`.
 const AXIS_ROW_EXTENDED_EXTRA_PX: f32 = 224.0;
-/// Inter-row spacing inside the AxesTab Flickable's `VerticalLayout`.
+/// Inter-row spacing inside the `AxesTab` Flickable's `VerticalLayout`.
 const AXIS_ROW_SPACING_PX: f32 = 4.0;
 
 /// Which inline dropdown picker is currently open (issue #15). Values
@@ -184,7 +184,7 @@ pub(crate) struct State {
     /// dispatch the value. `None` whenever the overlay is closed.
     pub(crate) current_dropdown: Option<(DropdownKind, i32)>,
     /// Button-capture state machine. Owns the currently-armed cell
-    /// (Physical or SrcB) plus the per-slot disarm-tick pair that
+    /// (Physical or `SrcB`) plus the per-slot disarm-tick pair that
     /// drives the Slint `NumberCell.disarm-tick` properties. See
     /// `freejoyx-core::domain::modes::button_capture` for the rules.
     pub(crate) button_capture: ButtonCapture,
@@ -195,11 +195,11 @@ pub(crate) struct State {
     /// borrow on the Mode itself.
     pub(crate) last_phy_button_data: [u8; BUTTON_BITMAP_BYTES],
     /// Axis-calibration state machine. Owns the currently-armed axis;
-    /// widens calib_min / calib_max on every tick while armed.
+    /// widens `calib_min` / `calib_max` on every tick while armed.
     pub(crate) axis_calibrate: AxisCalibration,
     /// Axis auto-detect state machine. Owns the armed slot, the raw-
     /// value baseline captured at arm time, and the per-slot disarm
-    /// ticks for the Detect IconButton.
+    /// ticks for the Detect `IconButton`.
     pub(crate) axis_detect: AxisDetect,
     /// Owns the single-shot timer that clears `flash-*-slot` after a
     /// pin-jump click. Dropping a `slint::Timer` cancels it, so we
@@ -275,7 +275,7 @@ fn push_device_identity(
 }
 
 /// Recompute the six per-tab "configured" indicators and push them to
-/// the AppWindow. Called from every cfg-mutation entry point so the
+/// the `AppWindow`. Called from every cfg-mutation entry point so the
 /// dots on the tab strip stay live with the held config.
 ///
 /// Tabs without a meaningful "has content" question (Advanced — always
@@ -1246,7 +1246,7 @@ fn wire_axis_callbacks(
             tracing::info!(
                 target: "freejoyx::axis",
                 slot = slot as u64,
-                center = captured_center as i64,
+                center = i64::from(captured_center),
                 "set centre"
             );
             refresh_axis_row(&s, &m, slot);
@@ -1287,7 +1287,16 @@ fn wire_axis_callbacks(
         let w = window.as_weak();
         move |slot: i32, deg: i32| {
             let raw = (deg.max(0) / 15).clamp(0, 31);
-            apply_axis_field(&s, &m, &w, slot, raw, 0, 31, |a, x| a.set_offset_angle(x));
+            apply_axis_field(
+                &s,
+                &m,
+                &w,
+                slot,
+                raw,
+                0,
+                31,
+                freejoyx_core::wire::AxisConfig::set_offset_angle,
+            );
         }
     });
 
@@ -1689,7 +1698,7 @@ fn clear_toast(window: &AppWindow) {
 /// reads as transient rather than a sticky selection.
 const PIN_JUMP_FLASH_HOLD: Duration = Duration::from_millis(1500);
 
-/// Compute the Y-offset of the axis row at `slot` inside the AxesTab
+/// Compute the Y-offset of the axis row at `slot` inside the `AxesTab`
 /// Flickable's viewport. Walks the upstream rows summing the same
 /// per-row collapsed/expanded heights as `compute_axes_viewport_height`,
 /// so the scroll target lines up with how rows actually render.
@@ -1736,7 +1745,7 @@ fn refresh_verbosity_labels(window: &AppWindow, filter: &crate::debug_log::Debug
 
 /// Drain new buffer entries into the Slint model. Bounded by the
 /// buffer cap, so even after a long idle the worst case is N
-/// allocations where N == BUFFER_CAPACITY.
+/// allocations where N == `BUFFER_CAPACITY`.
 fn pump_log_model(
     state: &Rc<RefCell<State>>,
     log_model: &Rc<VecModel<LogEntry>>,
@@ -2630,7 +2639,7 @@ fn apply_dropdown_pick(
             let Ok(wire_slot) = usize::try_from(slot) else {
                 return;
             };
-            if wire_slot < MAX_FAST_ENCODER_NUM || wire_slot >= MAX_ENCODERS_NUM {
+            if !(MAX_FAST_ENCODER_NUM..MAX_ENCODERS_NUM).contains(&wire_slot) {
                 return;
             }
             let row = wire_slot - MAX_FAST_ENCODER_NUM;
@@ -2998,7 +3007,7 @@ thread_local! {
     /// need to reset on disconnect because edges only fire when bits
     /// actually transition between consecutive ticks.
     static LAST_LOGICAL_BITMAP: std::cell::RefCell<[u8; BUTTON_BITMAP_BYTES]> =
-        std::cell::RefCell::new([0; BUTTON_BITMAP_BYTES]);
+        const { std::cell::RefCell::new([0; BUTTON_BITMAP_BYTES]) };
 }
 
 /// Emit one `tracing::info!` per button bitmap edge (physical +

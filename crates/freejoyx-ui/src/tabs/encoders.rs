@@ -399,14 +399,13 @@ pub fn wire_callbacks(
             {
                 let mut st = s.borrow_mut();
                 let old_bpc = st.shift_reg_chip_size[slot].max(1);
-                let cfg = match st.last_config.as_mut() {
-                    Some(c) => c,
-                    None => {
-                        st.shift_reg_chip_size[slot] = new_bpc;
-                        drop(st);
-                        refresh_one_shift_reg_row(&s, &m, slot);
-                        return;
-                    }
+                let cfg = if let Some(c) = st.last_config.as_mut() {
+                    c
+                } else {
+                    st.shift_reg_chip_size[slot] = new_bpc;
+                    drop(st);
+                    refresh_one_shift_reg_row(&s, &m, slot);
+                    return;
                 };
                 let nc = cfg.shift_registers[slot].button_cnt / old_bpc;
                 let new_total = u16::from(new_bpc) * u16::from(nc);

@@ -358,7 +358,7 @@ impl LogBuffer {
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.inner.lock().map(|g| g.events.len()).unwrap_or(0)
+        self.inner.lock().map_or(0, |g| g.events.len())
     }
 
     #[must_use]
@@ -396,10 +396,7 @@ impl DebugFilterHandle {
 
     #[must_use]
     pub fn admits(&self, level: LogLevel, category: EventCategory) -> bool {
-        self.inner
-            .lock()
-            .map(|g| g.admits(level, category))
-            .unwrap_or(false)
+        self.inner.lock().is_ok_and(|g| g.admits(level, category))
     }
 }
 
@@ -482,7 +479,7 @@ impl Visit for FieldVisitor {
 }
 
 /// Format `SystemTime` as `HH:MM:SS.mmm` for the UI. Falls back to the
-/// raw seconds-since-epoch if the system clock is before UNIX_EPOCH
+/// raw seconds-since-epoch if the system clock is before `UNIX_EPOCH`
 /// (which shouldn't happen but we don't want to panic on it).
 #[must_use]
 pub fn format_timestamp(t: SystemTime) -> String {
