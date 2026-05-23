@@ -27,8 +27,7 @@ const FAST_ENCODER_HINTS: [&str; MAX_FAST_ENCODER_NUM] = [
 /// the Encoders tab strip indicator dot.
 #[must_use]
 pub fn encoders_has_content(cfg: &DeviceConfig) -> bool {
-    cfg.encoders.iter().any(|&v| v != 0)
-        || cfg.fast_encoders.iter().any(|fe| fe.enabled != 0)
+    cfg.encoders.iter().any(|&v| v != 0) || cfg.fast_encoders.iter().any(|fe| fe.enabled != 0)
 }
 
 /// Does any shift-register slot carry a non-default reg-type? Drives
@@ -143,7 +142,10 @@ pub fn refresh_fast_encoder_model(model: &Rc<VecModel<FastEncoderRow>>, cfg: &De
     }
 }
 
-pub(crate) fn build_fast_encoder_row(slot: usize, fe: &freejoyx_core::wire::FastEncoder) -> FastEncoderRow {
+pub(crate) fn build_fast_encoder_row(
+    slot: usize,
+    fe: &freejoyx_core::wire::FastEncoder,
+) -> FastEncoderRow {
     let mode_label = EncoderMode::from_u8(fe.mode)
         .map_or_else(|| format!("?{}", fe.mode), |m| m.label().to_string());
     FastEncoderRow {
@@ -174,11 +176,7 @@ pub fn refresh_shift_reg_model(
     }
 }
 
-pub(crate) fn build_shift_reg_row(
-    slot: usize,
-    cfg: &DeviceConfig,
-    chip_size: u8,
-) -> ShiftRegRow {
+pub(crate) fn build_shift_reg_row(slot: usize, cfg: &DeviceConfig, chip_size: u8) -> ShiftRegRow {
     let sr = &cfg.shift_registers[slot];
     let type_label = ShiftRegType::from_u8(sr.reg_type)
         .map_or_else(|| format!("?{}", sr.reg_type), |t| t.label().to_string());
@@ -412,8 +410,7 @@ pub fn wire_callbacks(
                 };
                 let nc = cfg.shift_registers[slot].button_cnt / old_bpc;
                 let new_total = u16::from(new_bpc) * u16::from(nc);
-                cfg.shift_registers[slot].button_cnt =
-                    u8::try_from(new_total).unwrap_or(u8::MAX);
+                cfg.shift_registers[slot].button_cnt = u8::try_from(new_total).unwrap_or(u8::MAX);
                 st.shift_reg_chip_size[slot] = new_bpc;
             }
             refresh_one_shift_reg_row(&s, &m, slot);
@@ -442,8 +439,7 @@ pub fn wire_callbacks(
                     return;
                 };
                 let new_total = u16::from(bpc) * u16::from(new_nc);
-                cfg.shift_registers[slot].button_cnt =
-                    u8::try_from(new_total).unwrap_or(u8::MAX);
+                cfg.shift_registers[slot].button_cnt = u8::try_from(new_total).unwrap_or(u8::MAX);
             }
             refresh_one_shift_reg_row(&s, &m, slot);
             mark_dirty(&w);

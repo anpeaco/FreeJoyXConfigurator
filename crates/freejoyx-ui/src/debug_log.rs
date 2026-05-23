@@ -385,10 +385,7 @@ impl DebugFilterHandle {
     /// is poisoned (UI keeps rendering rather than panicking).
     #[must_use]
     pub fn snapshot(&self) -> DebugFilter {
-        self.inner
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.inner.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     pub fn update(&self, f: impl FnOnce(&mut DebugFilter)) {
@@ -471,13 +468,16 @@ impl Visit for FieldVisitor {
     }
 
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.fields.push((field.name().to_string(), value.to_string()));
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
     }
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.fields.push((field.name().to_string(), value.to_string()));
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
     }
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.fields.push((field.name().to_string(), value.to_string()));
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
     }
 }
 
@@ -565,8 +565,14 @@ mod tests {
             target_to_category("freejoyx::button::logical"),
             EventCategory::Button
         );
-        assert_eq!(target_to_category("freejoyx_device::worker"), EventCategory::Device);
-        assert_eq!(target_to_category("random_other_crate"), EventCategory::Other);
+        assert_eq!(
+            target_to_category("freejoyx_device::worker"),
+            EventCategory::Device
+        );
+        assert_eq!(
+            target_to_category("random_other_crate"),
+            EventCategory::Other
+        );
     }
 
     #[test]

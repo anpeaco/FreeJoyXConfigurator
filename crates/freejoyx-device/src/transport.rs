@@ -171,10 +171,7 @@ pub trait Transport: Send {
     ///
     /// # Errors
     /// HID read failure or decode error.
-    fn read_params_blocking(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<ParamsReport, TransportError>;
+    fn read_params_blocking(&mut self, timeout: Duration) -> Result<ParamsReport, TransportError>;
 
     /// Read the full 1580-byte `dev_config_t` from the device.
     ///
@@ -203,10 +200,7 @@ impl Transport for Device {
     fn request_params(&self) -> Result<(), TransportError> {
         Self::request_params(self)
     }
-    fn read_params_blocking(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<ParamsReport, TransportError> {
+    fn read_params_blocking(&mut self, timeout: Duration) -> Result<ParamsReport, TransportError> {
         Self::read_params_blocking(self, timeout)
     }
     fn read_config(&self) -> Result<Box<DeviceConfig>, TransportError> {

@@ -399,8 +399,7 @@ fn dispatch_pending_commands(
                     // subscription module swallows the expected
                     // renewal failure and the next periodic tick
                     // retries if the device is still present.
-                    let _ =
-                        subscription.renew(Instant::now(), RenewalReason::AfterWrite, device);
+                    let _ = subscription.renew(Instant::now(), RenewalReason::AfterWrite, device);
                 }
                 Err(e) => {
                     let _ = evt_tx.send(DeviceEvent::ConfigError(format!("write: {e}")));
@@ -649,11 +648,11 @@ mod pump_tests {
             match self.pending_reads.lock().unwrap().pop_front() {
                 Some(NextRead::Params(p)) => Ok(p),
                 Some(NextRead::Timeout) | None => Err(TransportError::Timeout { ms: 0 }),
-                Some(NextRead::Disconnect) => Err(TransportError::Read(
-                    hidapi::HidError::HidApiError {
+                Some(NextRead::Disconnect) => {
+                    Err(TransportError::Read(hidapi::HidError::HidApiError {
                         message: "fake disconnect".into(),
-                    },
-                )),
+                    }))
+                }
             }
         }
         fn read_config(&self) -> Result<Box<DeviceConfig>, TransportError> {
@@ -666,7 +665,11 @@ mod pump_tests {
         }
         fn write_config(&self, _cfg: &DeviceConfig) -> Result<(), TransportError> {
             self.events.lock().unwrap().push(FakeCall::WriteConfig);
-            self.write_config_result.lock().unwrap().take().unwrap_or(Ok(()))
+            self.write_config_result
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or(Ok(()))
         }
     }
 
@@ -705,7 +708,9 @@ mod pump_tests {
     fn drain_events(rx: &mpsc::Receiver<DeviceEvent>, dur: Duration) -> Vec<DeviceEvent> {
         let mut out = Vec::new();
         let deadline = std::time::Instant::now() + dur;
-        while let Ok(e) = rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+        while let Ok(e) =
+            rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        {
             out.push(e);
         }
         out
@@ -730,7 +735,9 @@ mod pump_tests {
         cmd_tx.send(Command::Shutdown).unwrap();
         join.join().unwrap();
 
-        assert!(events.iter().any(|e| matches!(e, DeviceEvent::ParamsTick(_))));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, DeviceEvent::ParamsTick(_))));
     }
 
     #[test]

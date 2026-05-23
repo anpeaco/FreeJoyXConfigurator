@@ -74,8 +74,7 @@ impl AxisDetect {
             }
         }
         let mut baseline = [0i16; MAX_AXIS_NUM];
-        baseline[..MAX_AXIS_NUM]
-            .copy_from_slice(&params.raw_axis_data[..MAX_AXIS_NUM]);
+        baseline[..MAX_AXIS_NUM].copy_from_slice(&params.raw_axis_data[..MAX_AXIS_NUM]);
         self.armed = Some(DetectArm {
             slot,
             baseline,
@@ -139,8 +138,7 @@ impl AxisDetect {
             if slot == arm.slot {
                 continue;
             }
-            let delta =
-                (i32::from(params.raw_axis_data[slot]) - i32::from(*base)).abs();
+            let delta = (i32::from(params.raw_axis_data[slot]) - i32::from(*base)).abs();
             if delta >= AXIS_DETECT_THRESHOLD && best.is_none_or(|(_, b)| delta > b) {
                 best = Some((slot, delta));
             }

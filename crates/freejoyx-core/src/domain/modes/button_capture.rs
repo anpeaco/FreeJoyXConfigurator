@@ -173,10 +173,7 @@ impl ButtonCapture {
 /// `params.phy_button_data` but was unset in `prev_phy`. Returns the
 /// 0-based physical index (= byte_idx * 8 + bit). Returns `None` if no
 /// new presses this tick.
-fn first_rising_edge(
-    params: &ParamsReport,
-    prev_phy: &[u8; BUTTON_BITMAP_BYTES],
-) -> Option<usize> {
+fn first_rising_edge(params: &ParamsReport, prev_phy: &[u8; BUTTON_BITMAP_BYTES]) -> Option<usize> {
     for (byte_idx, (new, old)) in params
         .phy_button_data
         .iter()

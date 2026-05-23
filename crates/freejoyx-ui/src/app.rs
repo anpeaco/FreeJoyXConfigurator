@@ -24,10 +24,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use freejoyx_core::domain::{
-    analog_pin_slots, completed_fast_encoder_slots, physical_assignment_blocked, validate_for_write,
-    AxisCalibration, AxisDetect, AxisFilter, AxisSource, Board, ButtonCapture, ButtonType,
-    ButtonTypeCategory, CoexistenceCheck, ConfigError, EncoderMode, PinFunction, PinFunctionFamily,
-    ShiftRegType,
+    analog_pin_slots, completed_fast_encoder_slots, physical_assignment_blocked,
+    validate_for_write, AxisCalibration, AxisDetect, AxisFilter, AxisSource, Board, ButtonCapture,
+    ButtonType, ButtonTypeCategory, CoexistenceCheck, ConfigError, EncoderMode, PinFunction,
+    PinFunctionFamily, ShiftRegType,
 };
 use freejoyx_core::persist::{load_from_file, save_to_file};
 use freejoyx_core::wire::{
@@ -38,12 +38,12 @@ use freejoyx_core::wire::{
 use freejoyx_device::{spawn_for_serial, Command, DeviceCandidate, DeviceEvent, DeviceHandle};
 use slint::{ComponentHandle, Global, Model, ModelRc, SharedString, VecModel};
 
+use crate::settings;
 use crate::tabs::advanced as advanced_glue;
 use crate::tabs::buttons as buttons_glue;
 use crate::tabs::encoders as encoders_glue;
 use crate::tabs::pins as pins_glue;
 use crate::tabs::pins::{axis_back_to_pin, pin_jump_target, shift_reg_back_to_pin};
-use crate::settings;
 use crate::{
     AppWindow, AxisRow, ButtonRow, CategoryChip, DeviceOption, DropdownEntry, EncoderRow,
     FastEncoderRow, LogEntry, Palette, PinRow, ShiftRegRow, ShiftSlot, TimerField,
@@ -210,8 +210,7 @@ pub(crate) struct State {
     /// format only stores `button_cnt`; this array is the user's
     /// last-typed chip-size for each row, used to derive `num_chips`
     /// on display. Defaults to 8 (HC165/CD4021 chip size).
-    pub(crate) shift_reg_chip_size:
-        [u8; freejoyx_core::wire::MAX_SHIFT_REG_NUM],
+    pub(crate) shift_reg_chip_size: [u8; freejoyx_core::wire::MAX_SHIFT_REG_NUM],
     /// Per-axis "Show extended settings" expand/collapse state. UI
     /// only — not persisted. Drives the extra row in the Axes tab
     /// card and the third tier of `compute_axes_viewport_height`.
@@ -667,14 +666,10 @@ fn pump_events(
                             ..
                         } = &mut *s;
                         if let Some(cfg) = last_config.as_mut() {
-                            let cap = button_capture
-                                .on_params_tick(&p, last_phy_button_data, cfg);
+                            let cap = button_capture.on_params_tick(&p, last_phy_button_data, cfg);
                             let cal = axis_calibrate.on_params_tick(&p, cfg);
-                            let det = axis_detect.on_params_tick(
-                                &p,
-                                cfg,
-                                std::time::Instant::now(),
-                            );
+                            let det =
+                                axis_detect.on_params_tick(&p, cfg, std::time::Instant::now());
                             (
                                 cap.config_changed,
                                 cal.config_changed || det.config_changed,
@@ -745,9 +740,7 @@ fn pump_events(
                     window.set_buttons_filter_physical(i32::try_from(idx).unwrap_or(-1));
                     buttons_glue::rebuild_filtered(state, button_model, &window.as_weak());
                     window.set_buttons_jump_y(0.0);
-                    window.set_buttons_jump_tick(
-                        window.get_buttons_jump_tick().wrapping_add(1),
-                    );
+                    window.set_buttons_jump_tick(window.get_buttons_jump_tick().wrapping_add(1));
                 }
                 if captured {
                     window.set_can_write(window.get_connected());
@@ -763,9 +756,10 @@ fn pump_events(
                         .map(|p| (p.raw_axis_data, p.axis_data));
                     let inputs = AxisRenderInputs::from_state(&state.borrow());
                     refresh_axis_model(axis_model, &cfg, &inputs, live);
-                    window.set_axes_viewport_height(
-                        compute_axes_viewport_height(&cfg, &inputs.expanded),
-                    );
+                    window.set_axes_viewport_height(compute_axes_viewport_height(
+                        &cfg,
+                        &inputs.expanded,
+                    ));
                     // Auto-detect can flip an axis's source; mirror the
                     // change into the Pins-tab model so the jump
                     // button's enabled state stays in sync.
@@ -812,9 +806,7 @@ fn pump_events(
                 );
                 s.status = format!(
                     "config received — fw 0x{:04x}, board {:?}, {} pins assigned",
-                    cfg.firmware_version,
-                    s.board,
-                    assigned,
+                    cfg.firmware_version, s.board, assigned,
                 );
                 let board = s.board;
                 let live = s
@@ -831,9 +823,10 @@ fn pump_events(
                 pins_glue::refresh_pin_model(pin_model, &cfg, board);
                 let axis_inputs = AxisRenderInputs::from_state(&state.borrow());
                 refresh_axis_model(axis_model, &cfg, &axis_inputs, live);
-                window.set_axes_viewport_height(
-                    compute_axes_viewport_height(&cfg, &axis_inputs.expanded),
-                );
+                window.set_axes_viewport_height(compute_axes_viewport_height(
+                    &cfg,
+                    &axis_inputs.expanded,
+                ));
                 {
                     let s = state.borrow();
                     let filter = build_button_filter(&s);
@@ -973,15 +966,14 @@ fn format_validation_errors(errors: &[ConfigError]) -> String {
         if errors.len() == 1 { "" } else { "s" },
     );
     for err in errors.iter().take(MAX_LINES) {
-        let _ = write!(
-            &mut out,
-            "\n• [{}] {}",
-            err.tab_hint(),
-            err.human_summary()
-        );
+        let _ = write!(&mut out, "\n• [{}] {}", err.tab_hint(), err.human_summary());
     }
     if errors.len() > MAX_LINES {
-        let _ = write!(&mut out, "\n… and {} more (see Debug tab)", errors.len() - MAX_LINES);
+        let _ = write!(
+            &mut out,
+            "\n… and {} more (see Debug tab)",
+            errors.len() - MAX_LINES
+        );
     }
     out
 }
@@ -1240,10 +1232,7 @@ fn wire_axis_callbacks(
             let captured_center;
             {
                 let mut st = s.borrow_mut();
-                let raw = st
-                    .last_params
-                    .as_ref()
-                    .map_or(0, |p| p.raw_axis_data[slot]);
+                let raw = st.last_params.as_ref().map_or(0, |p| p.raw_axis_data[slot]);
                 let Some(cfg) = st.last_config.as_mut() else {
                     return;
                 };
@@ -1326,14 +1315,18 @@ fn wire_axis_callbacks(
         let m = axis_model.clone();
         let w = window.as_weak();
         move |slot: i32, v: i32| {
-            let Ok(slot) = usize::try_from(slot) else { return };
+            let Ok(slot) = usize::try_from(slot) else {
+                return;
+            };
             if slot >= MAX_AXIS_NUM {
                 return;
             }
             let clamped = u8::try_from(v.clamp(0, 12)).unwrap_or(0);
             {
                 let mut st = s.borrow_mut();
-                let Some(cfg) = st.last_config.as_mut() else { return };
+                let Some(cfg) = st.last_config.as_mut() else {
+                    return;
+                };
                 cfg.axes_to_buttons[slot].buttons_cnt = clamped;
             }
             refresh_axis_row(&s, &m, slot);
@@ -1350,7 +1343,9 @@ fn wire_axis_callbacks(
         let m = axis_model.clone();
         let w = window.as_weak();
         move |slot: i32| {
-            let Ok(slot) = usize::try_from(slot) else { return };
+            let Ok(slot) = usize::try_from(slot) else {
+                return;
+            };
             if slot >= MAX_AXIS_NUM {
                 return;
             }
@@ -1583,8 +1578,7 @@ fn refresh_axis_model(
 
 /// Axis title labels matching the Qt configurator
 /// (`axes.cpp::axesList()`) — X, Y, Z, Rx, Ry, Rz, Slider 1, Slider 2.
-const AXIS_TITLES: [&str; MAX_AXIS_NUM] =
-    ["X", "Y", "Z", "Rx", "Ry", "Rz", "Slider 1", "Slider 2"];
+const AXIS_TITLES: [&str; MAX_AXIS_NUM] = ["X", "Y", "Z", "Rx", "Ry", "Rz", "Slider 1", "Slider 2"];
 
 /// Human label for an `AxisSource`. Pin labels use the board's
 /// silkscreen naming so `PB11` reads as `PB2` on a `BlackPill`.
@@ -1699,11 +1693,7 @@ const PIN_JUMP_FLASH_HOLD: Duration = Duration::from_millis(1500);
 /// Flickable's viewport. Walks the upstream rows summing the same
 /// per-row collapsed/expanded heights as `compute_axes_viewport_height`,
 /// so the scroll target lines up with how rows actually render.
-fn axes_row_y_offset(
-    cfg: &DeviceConfig,
-    expanded: &[bool; MAX_AXIS_NUM],
-    slot: usize,
-) -> f32 {
+fn axes_row_y_offset(cfg: &DeviceConfig, expanded: &[bool; MAX_AXIS_NUM], slot: usize) -> f32 {
     let mut y: f32 = 0.0;
     for i in 0..slot.min(MAX_AXIS_NUM) {
         let has_source = !matches!(cfg.axis_config[i].source(), AxisSource::None);
@@ -1738,10 +1728,7 @@ fn refresh_category_model(
 }
 
 /// Push the verbosity label / index from the filter to the window.
-fn refresh_verbosity_labels(
-    window: &AppWindow,
-    filter: &crate::debug_log::DebugFilterHandle,
-) {
+fn refresh_verbosity_labels(window: &AppWindow, filter: &crate::debug_log::DebugFilterHandle) {
     let level = filter.snapshot().min_level;
     window.set_log_verbosity_index(level.ui_index());
     window.set_log_verbosity_label(SharedString::from(level.short_label().trim()));
@@ -1921,15 +1908,19 @@ fn wire_debug_callbacks(
 pub(crate) fn schedule_flash_clear(state: &Rc<RefCell<State>>, weak: &slint::Weak<AppWindow>) {
     let flash_weak = weak.clone();
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::SingleShot, PIN_JUMP_FLASH_HOLD, move || {
-        if let Some(w) = flash_weak.upgrade() {
-            w.set_flash_axis_slot(-1);
-            w.set_flash_shift_reg_slot(-1);
-            w.set_flash_pin_slot(-1);
-            w.set_flash_button_slot_a(-1);
-            w.set_flash_button_slot_b(-1);
-        }
-    });
+    timer.start(
+        slint::TimerMode::SingleShot,
+        PIN_JUMP_FLASH_HOLD,
+        move || {
+            if let Some(w) = flash_weak.upgrade() {
+                w.set_flash_axis_slot(-1);
+                w.set_flash_shift_reg_slot(-1);
+                w.set_flash_pin_slot(-1);
+                w.set_flash_button_slot_a(-1);
+                w.set_flash_button_slot_b(-1);
+            }
+        },
+    );
     state.borrow_mut().pin_jump_flash_timer = Some(timer);
 }
 
@@ -2301,14 +2292,18 @@ fn build_dropdown_for(
             (entries, i32::from(cfg.encoders[slot_usz]))
         }
         DropdownKind::EncoderFastMode => {
-            let slot_usz = usize::try_from(slot).unwrap_or(0).min(MAX_FAST_ENCODER_NUM - 1);
+            let slot_usz = usize::try_from(slot)
+                .unwrap_or(0)
+                .min(MAX_FAST_ENCODER_NUM - 1);
             let entries: Vec<DropdownEntry> = EncoderMode::all()
                 .map(|m| flat_dropdown(m.label(), i32::from(m.to_u8())))
                 .collect();
             (entries, i32::from(cfg.fast_encoders[slot_usz].mode))
         }
         DropdownKind::ShiftRegType => {
-            let slot_usz = usize::try_from(slot).unwrap_or(0).min(MAX_SHIFT_REG_NUM - 1);
+            let slot_usz = usize::try_from(slot)
+                .unwrap_or(0)
+                .min(MAX_SHIFT_REG_NUM - 1);
             let entries: Vec<DropdownEntry> = ShiftRegType::all()
                 .map(|t| flat_dropdown(t.label(), i32::from(t.to_u8())))
                 .collect();
@@ -2347,7 +2342,10 @@ fn build_dropdown_for(
             let entries: Vec<DropdownEntry> = (0..MAX_AXIS_NUM)
                 .map(|i| flat_dropdown(AXIS_TITLES[i], i32::try_from(i).unwrap_or(0)))
                 .collect();
-            (entries, i32::from(cfg.axis_config[slot_usz].source_secondary()))
+            (
+                entries,
+                i32::from(cfg.axis_config[slot_usz].source_secondary()),
+            )
         }
         DropdownKind::AxisButtonAction1 => {
             let slot_usz = usize::try_from(slot).unwrap_or(0).min(MAX_AXIS_NUM - 1);
@@ -2433,7 +2431,10 @@ fn build_pin_function_entries(all: &[PinFunction]) -> Vec<DropdownEntry> {
     let mut entries: Vec<DropdownEntry> = Vec::with_capacity(all.len() + families.len());
     // "Not used" lives at index 0 of `PinFunction::all()`. Surface it
     // as a bare dash with no category header.
-    if let Some(unused_idx) = all.iter().position(|f| f.family() == PinFunctionFamily::NotUsed) {
+    if let Some(unused_idx) = all
+        .iter()
+        .position(|f| f.family() == PinFunctionFamily::NotUsed)
+    {
         entries.push(flat_dropdown("—", i32::try_from(unused_idx).unwrap_or(0)));
     }
     for (family, label) in families {
@@ -2865,11 +2866,7 @@ fn apply_axis_source(
 
 /// Rebuild a single axis row using the current `State` + config.
 /// Convenience over inlining the boilerplate at every callsite.
-fn refresh_axis_row(
-    state: &Rc<RefCell<State>>,
-    axis_model: &Rc<VecModel<AxisRow>>,
-    slot: usize,
-) {
+fn refresh_axis_row(state: &Rc<RefCell<State>>, axis_model: &Rc<VecModel<AxisRow>>, slot: usize) {
     let s = state.borrow();
     let Some(cfg) = s.last_config.as_ref() else {
         return;

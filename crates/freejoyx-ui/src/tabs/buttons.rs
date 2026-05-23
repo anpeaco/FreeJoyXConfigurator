@@ -182,7 +182,10 @@ pub fn refresh_button_model(
                 &logic_errors,
                 capture.disarm_ticks(slot),
             );
-            if model.row_data(i).is_some_and(|existing| existing == new_row) {
+            if model
+                .row_data(i)
+                .is_some_and(|existing| existing == new_row)
+            {
                 continue;
             }
             model.set_row_data(i, new_row);
@@ -331,11 +334,7 @@ fn short_logic_error_label(e: &LogicError) -> String {
     }
 }
 
-fn pressed_bits(
-    params: Option<&ParamsReport>,
-    slot: usize,
-    physical_num: i8,
-) -> (bool, bool) {
+fn pressed_bits(params: Option<&ParamsReport>, slot: usize, physical_num: i8) -> (bool, bool) {
     let Some(p) = params else {
         return (false, false);
     };
@@ -479,7 +478,10 @@ pub fn build_button_type_entries(
                 Some((buttons, slot, phy)) => {
                     match physical_assignment_blocked(buttons, slot, phy, *bt) {
                         CoexistenceCheck::Ok => (false, SharedString::default()),
-                        CoexistenceCheck::Blocked { other_slot, other_type } => {
+                        CoexistenceCheck::Blocked {
+                            other_slot,
+                            other_type,
+                        } => {
                             let other_label = ButtonType::from_u8(other_type).map_or_else(
                                 || format!("? ({other_type})"),
                                 |t| t.label().to_string(),
@@ -561,10 +563,7 @@ pub fn build_filter_category_entries() -> Vec<DropdownEntry> {
     let mut out = Vec::with_capacity(12);
     out.push(flat_entry("All", -1));
     for (i, cat) in ButtonTypeCategory::all().enumerate() {
-        out.push(flat_entry(
-            cat.label(),
-            i32::try_from(i).unwrap_or(0),
-        ));
+        out.push(flat_entry(cat.label(), i32::try_from(i).unwrap_or(0)));
     }
     out
 }
@@ -814,10 +813,7 @@ fn wire_button_capture_callbacks(
 /// Drop the buttons-tab press-to-filter arm. Idempotent — safe to call
 /// when nothing is armed. Used by the tab-switch hook in app.slint and
 /// by the per-row Physical cell arming path.
-fn disarm_buttons_filter(
-    state: &Rc<RefCell<crate::app::State>>,
-    window: &slint::Weak<AppWindow>,
-) {
+fn disarm_buttons_filter(state: &Rc<RefCell<crate::app::State>>, window: &slint::Weak<AppWindow>) {
     let was_armed = {
         let mut st = state.borrow_mut();
         let prev = st.btn_filter_arm;
@@ -903,11 +899,7 @@ fn wire_filter_callbacks(
         window.on_buttons_filter_physical_edited(move |v| {
             {
                 let mut st = s.borrow_mut();
-                st.btn_filter_physical = if v < 0 {
-                    None
-                } else {
-                    Some(clamp_i8(v))
-                };
+                st.btn_filter_physical = if v < 0 { None } else { Some(clamp_i8(v)) };
             }
             rebuild_filtered(&s, &m, &w);
         });
@@ -958,9 +950,8 @@ fn wire_filter_callbacks(
                 let Some(cfg) = st.last_config.as_ref() else {
                     return;
                 };
-                (0..MAX_BUTTONS_NUM).find(|i| {
-                    !st.btn_force_shown.contains(i) && cfg.buttons[*i].physical_num < 0
-                })
+                (0..MAX_BUTTONS_NUM)
+                    .find(|i| !st.btn_force_shown.contains(i) && cfg.buttons[*i].physical_num < 0)
             };
             if let Some(idx) = promoted {
                 s.borrow_mut().btn_force_shown.insert(idx);

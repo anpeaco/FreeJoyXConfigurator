@@ -21,9 +21,7 @@ use std::time::{Duration, Instant};
 
 use freejoyx_core::wire::{format_config, ParamsReport};
 use freejoyx_device::{enumerate, spawn_for_serial, Command, DeviceEvent};
-use freejoyx_ui::debug_log::{
-    BufferLayer, DebugFilter, DebugFilterHandle, LogBuffer,
-};
+use freejoyx_ui::debug_log::{BufferLayer, DebugFilter, DebugFilterHandle, LogBuffer};
 
 fn main() -> ExitCode {
     let log_buffer = LogBuffer::new();
@@ -51,11 +49,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_ui(
-    serial: Option<String>,
-    log_buffer: LogBuffer,
-    filter: DebugFilterHandle,
-) -> ExitCode {
+fn run_ui(serial: Option<String>, log_buffer: LogBuffer, filter: DebugFilterHandle) -> ExitCode {
     match freejoyx_ui::run(serial, log_buffer, filter) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

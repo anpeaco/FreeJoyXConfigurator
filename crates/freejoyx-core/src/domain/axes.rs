@@ -493,7 +493,12 @@ mod tests {
 
     #[test]
     fn axis_function_round_trips() {
-        for v in [AxisFunction::None, AxisFunction::Plus, AxisFunction::Minus, AxisFunction::Equal] {
+        for v in [
+            AxisFunction::None,
+            AxisFunction::Plus,
+            AxisFunction::Minus,
+            AxisFunction::Equal,
+        ] {
             assert_eq!(AxisFunction::from_u8(v.to_u8()), v);
         }
         assert_eq!(AxisFunction::from_u8(0xff), AxisFunction::Equal);

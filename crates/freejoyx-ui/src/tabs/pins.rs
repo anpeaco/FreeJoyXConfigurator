@@ -204,12 +204,9 @@ pub fn axis_back_to_pin(cfg: &DeviceConfig, axis_slot: usize) -> Option<usize> {
     match cfg.axis_config[axis_slot].source() {
         AxisSource::Pin(idx) => {
             let slot = idx as usize;
-            (cfg.pins
-                .get(slot)
-                .copied()
-                .and_then(PinFunction::from_i8)
+            (cfg.pins.get(slot).copied().and_then(PinFunction::from_i8)
                 == Some(PinFunction::AxisAnalog))
-                .then_some(slot)
+            .then_some(slot)
         }
         AxisSource::Encoder(slot) => {
             // Slot 0 = Enc 1 on PA8 (8) / PA9 (9).
@@ -223,10 +220,7 @@ pub fn axis_back_to_pin(cfg: &DeviceConfig, axis_slot: usize) -> Option<usize> {
                 _ => return None,
             };
             candidates.into_iter().find(|&p| {
-                cfg.pins
-                    .get(p)
-                    .copied()
-                    .and_then(PinFunction::from_i8)
+                cfg.pins.get(p).copied().and_then(PinFunction::from_i8)
                     == Some(PinFunction::FastEncoder)
             })
         }

@@ -154,8 +154,20 @@ mod tests {
         set_type(&mut buttons[40], ButtonType::EncoderInputA);
         set_type(&mut buttons[55], ButtonType::EncoderInputB);
         let pairs = pair_soft_encoders(&buttons);
-        assert_eq!(pairs[2], Some(SoftEncoderPair { a_button: 12, b_button: 30 }));
-        assert_eq!(pairs[3], Some(SoftEncoderPair { a_button: 40, b_button: 55 }));
+        assert_eq!(
+            pairs[2],
+            Some(SoftEncoderPair {
+                a_button: 12,
+                b_button: 30
+            })
+        );
+        assert_eq!(
+            pairs[3],
+            Some(SoftEncoderPair {
+                a_button: 40,
+                b_button: 55
+            })
+        );
         assert!(pairs[4].is_none());
     }
 
@@ -166,7 +178,13 @@ mod tests {
         set_type(&mut buttons[20], ButtonType::EncoderInputB);
         set_type(&mut buttons[30], ButtonType::EncoderInputA); // no later B
         let pairs = pair_soft_encoders(&buttons);
-        assert_eq!(pairs[2], Some(SoftEncoderPair { a_button: 10, b_button: 20 }));
+        assert_eq!(
+            pairs[2],
+            Some(SoftEncoderPair {
+                a_button: 10,
+                b_button: 20
+            })
+        );
         assert!(pairs[3].is_none());
     }
 
@@ -182,7 +200,19 @@ mod tests {
         set_type(&mut buttons[50], ButtonType::EncoderInputA);
         set_type(&mut buttons[60], ButtonType::EncoderInputA);
         let pairs = pair_soft_encoders(&buttons);
-        assert_eq!(pairs[2], Some(SoftEncoderPair { a_button: 50, b_button: 10 }));
-        assert_eq!(pairs[3], Some(SoftEncoderPair { a_button: 60, b_button: 20 }));
+        assert_eq!(
+            pairs[2],
+            Some(SoftEncoderPair {
+                a_button: 50,
+                b_button: 10
+            })
+        );
+        assert_eq!(
+            pairs[3],
+            Some(SoftEncoderPair {
+                a_button: 60,
+                b_button: 20
+            })
+        );
     }
 }

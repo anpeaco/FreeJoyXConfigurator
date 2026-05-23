@@ -135,7 +135,11 @@ impl ConfigError {
 #[must_use]
 pub fn validate_for_write(config: &DeviceConfig) -> Vec<ConfigError> {
     let mut out = Vec::new();
-    out.extend(validate_pins(&config.pins).into_iter().map(ConfigError::Pin));
+    out.extend(
+        validate_pins(&config.pins)
+            .into_iter()
+            .map(ConfigError::Pin),
+    );
     out.extend(
         validate_logic_buttons(config)
             .into_iter()

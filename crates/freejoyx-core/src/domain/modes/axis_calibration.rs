@@ -128,7 +128,10 @@ mod tests {
 
         let out = cal.on_params_tick(&params_with_raw(0, 5000), &mut cfg);
         assert!(!out.config_changed);
-        assert_eq!(cfg.axis_config[0].calib_max, 0, "no calibration → no change");
+        assert_eq!(
+            cfg.axis_config[0].calib_max, 0,
+            "no calibration → no change"
+        );
     }
 
     #[test]

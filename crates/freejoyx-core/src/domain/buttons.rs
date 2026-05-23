@@ -212,16 +212,12 @@ impl ButtonType {
             Self::Pov2Up | Self::Pov2Right | Self::Pov2Down | Self::Pov2Left | Self::Pov2Center => {
                 Pov2
             }
-            Self::Pov3Up
-            | Self::Pov3Right
-            | Self::Pov3Down
-            | Self::Pov3Left
-            | Self::Pov3Center => Pov3,
-            Self::Pov4Up
-            | Self::Pov4Right
-            | Self::Pov4Down
-            | Self::Pov4Left
-            | Self::Pov4Center => Pov4,
+            Self::Pov3Up | Self::Pov3Right | Self::Pov3Down | Self::Pov3Left | Self::Pov3Center => {
+                Pov3
+            }
+            Self::Pov4Up | Self::Pov4Right | Self::Pov4Down | Self::Pov4Left | Self::Pov4Center => {
+                Pov4
+            }
             Self::EncoderInputA | Self::EncoderInputB => Encoder,
             Self::Radio1 | Self::Radio2 | Self::Radio3 | Self::Radio4 => Radio,
             Self::SequentialToggle | Self::SequentialButton => Sequential,
@@ -330,10 +326,7 @@ impl ButtonTypeCategory {
                 ButtonType::Radio3,
                 ButtonType::Radio4,
             ],
-            Self::Sequential => &[
-                ButtonType::SequentialToggle,
-                ButtonType::SequentialButton,
-            ],
+            Self::Sequential => &[ButtonType::SequentialToggle, ButtonType::SequentialButton],
         }
     }
 }

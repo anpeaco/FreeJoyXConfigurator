@@ -33,18 +33,16 @@ pub use axes::{
     analog_pin_slots, completed_fast_encoder_slots, AxisButtonAction, AxisFilter, AxisFunction,
     AxisSource, I2cAddress, AXIS_SOURCE_ENCODER, AXIS_SOURCE_I2C, AXIS_SOURCE_NONE,
 };
-pub use buttons::{
-    physical_assignment_blocked, ButtonType, ButtonTypeCategory, CoexistenceCheck,
-};
+pub use buttons::{physical_assignment_blocked, ButtonType, ButtonTypeCategory, CoexistenceCheck};
 pub use encoders::{pair_soft_encoders, EncoderMode, SoftEncoderPair};
 pub use logic::{validate_logic_buttons, LogicError, LogicOp, BUTTON_TYPE_LOGIC};
-pub use pins::{
-    validate_pins, Board, BoardSlot, PinConflict, PinConflictKind, PinFunction, PinFunctionFamily,
-    BOARD_LAYOUT_LEN,
-};
 pub use modes::{
     AxisCalibration, AxisCalibrationOutcome, AxisDetect, AxisDetectOutcome, ButtonCapture,
     ButtonCaptureOutcome, CaptureTarget, AXIS_DETECT_THRESHOLD, AXIS_DETECT_TIMEOUT,
+};
+pub use pins::{
+    validate_pins, Board, BoardSlot, PinConflict, PinConflictKind, PinFunction, PinFunctionFamily,
+    BOARD_LAYOUT_LEN,
 };
 pub use shift_registers::ShiftRegType;
 pub use validation::{validate_for_write, ConfigError};

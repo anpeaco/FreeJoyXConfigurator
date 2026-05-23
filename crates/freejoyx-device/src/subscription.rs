@@ -76,10 +76,7 @@ impl ParamsSubscription {
     ///
     /// Returns [`TransportError`] verbatim from
     /// [`Transport::request_params`].
-    pub fn subscribe(
-        now: Instant,
-        transport: &mut dyn Transport,
-    ) -> Result<Self, TransportError> {
+    pub fn subscribe(now: Instant, transport: &mut dyn Transport) -> Result<Self, TransportError> {
         transport.request_params()?;
         Ok(Self {
             next_renewal: now + PARAMS_REQUEST_REFRESH,
@@ -191,7 +188,11 @@ mod tests {
         assert_eq!(t.calls(), 1);
 
         // Still well before the next deadline.
-        let outcome = sub.renew(now + Duration::from_millis(100), RenewalReason::Periodic, &mut t);
+        let outcome = sub.renew(
+            now + Duration::from_millis(100),
+            RenewalReason::Periodic,
+            &mut t,
+        );
         assert!(matches!(outcome, RenewalOutcome::Active));
         assert_eq!(t.calls(), 1, "no extra request_params before deadline");
     }
@@ -209,7 +210,11 @@ mod tests {
 
         // Immediately after the renewal, a fresh Periodic call must not
         // fire again — the deadline reset.
-        let outcome = sub.renew(after + Duration::from_millis(1), RenewalReason::Periodic, &mut t);
+        let outcome = sub.renew(
+            after + Duration::from_millis(1),
+            RenewalReason::Periodic,
+            &mut t,
+        );
         assert!(matches!(outcome, RenewalOutcome::Active));
         assert_eq!(t.calls(), 2);
     }
@@ -228,7 +233,11 @@ mod tests {
         // Deadline should not have been pushed forward by a failed send,
         // so the next Periodic call (with the transport now healthy)
         // retries immediately.
-        let outcome = sub.renew(after + Duration::from_millis(1), RenewalReason::Periodic, &mut t);
+        let outcome = sub.renew(
+            after + Duration::from_millis(1),
+            RenewalReason::Periodic,
+            &mut t,
+        );
         assert!(matches!(outcome, RenewalOutcome::Active));
         assert_eq!(t.calls(), 3, "retry happens on the very next periodic tick");
     }
@@ -240,7 +249,11 @@ mod tests {
         let mut sub = ParamsSubscription::subscribe(now, &mut t).unwrap();
 
         // Well before deadline — Periodic would skip, AfterRead must not.
-        let outcome = sub.renew(now + Duration::from_millis(50), RenewalReason::AfterRead, &mut t);
+        let outcome = sub.renew(
+            now + Duration::from_millis(50),
+            RenewalReason::AfterRead,
+            &mut t,
+        );
         assert!(matches!(outcome, RenewalOutcome::Active));
         assert_eq!(t.calls(), 2);
     }
@@ -252,7 +265,11 @@ mod tests {
         let mut sub = ParamsSubscription::subscribe(now, &mut t).unwrap();
 
         t.fail_next();
-        let outcome = sub.renew(now + Duration::from_millis(50), RenewalReason::AfterRead, &mut t);
+        let outcome = sub.renew(
+            now + Duration::from_millis(50),
+            RenewalReason::AfterRead,
+            &mut t,
+        );
         assert!(matches!(outcome, RenewalOutcome::Lost(_)));
     }
 
@@ -263,7 +280,11 @@ mod tests {
         let mut sub = ParamsSubscription::subscribe(now, &mut t).unwrap();
 
         t.fail_next();
-        let outcome = sub.renew(now + Duration::from_millis(50), RenewalReason::AfterWrite, &mut t);
+        let outcome = sub.renew(
+            now + Duration::from_millis(50),
+            RenewalReason::AfterWrite,
+            &mut t,
+        );
         assert!(
             matches!(outcome, RenewalOutcome::Active),
             "AfterWrite must swallow renewal failure during device re-enum",
@@ -285,6 +306,10 @@ mod tests {
         // A Periodic at t=2s+4s = 6s in must NOT send (deadline is at 2s + 5s = 7s).
         let outcome = sub.renew(at + Duration::from_secs(4), RenewalReason::Periodic, &mut t);
         assert!(matches!(outcome, RenewalOutcome::Active));
-        assert_eq!(t.calls(), 2, "AfterWrite success rearmed the periodic deadline");
+        assert_eq!(
+            t.calls(),
+            2,
+            "AfterWrite success rearmed the periodic deadline"
+        );
     }
 }

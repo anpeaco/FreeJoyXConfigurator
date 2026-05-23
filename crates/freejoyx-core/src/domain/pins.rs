@@ -204,13 +204,12 @@ impl PinFunction {
     /// chain off them.
     #[must_use]
     pub fn family(self) -> PinFunctionFamily {
-        use PinFunctionFamily::{Axis, Bus, Button, Encoder, Led, NotUsed, RgbLed, Sensor, ShiftReg};
+        use PinFunctionFamily::{
+            Axis, Bus, Button, Encoder, Led, NotUsed, RgbLed, Sensor, ShiftReg,
+        };
         match self {
             Self::NotUsed => NotUsed,
-            Self::ButtonGnd
-            | Self::ButtonVcc
-            | Self::ButtonRow
-            | Self::ButtonColumn => Button,
+            Self::ButtonGnd | Self::ButtonVcc | Self::ButtonRow | Self::ButtonColumn => Button,
             Self::AxisAnalog => Axis,
             Self::FastEncoder => Encoder,
             Self::SpiSck
@@ -412,47 +411,207 @@ pub const BOARD_LAYOUT_LEN: usize = 40;
 /// locked.
 pub const BLUEPILL_BOARD_LAYOUT: [BoardSlot; BOARD_LAYOUT_LEN] = [
     // -- Left column (UI), top → bottom — B-side of the board --
-    BoardSlot { silk: "PB12", wire_slot: Some(23), role_label: ""      },
-    BoardSlot { silk: "PB13", wire_slot: Some(24), role_label: ""      },
-    BoardSlot { silk: "PB14", wire_slot: Some(25), role_label: ""      },
-    BoardSlot { silk: "PB15", wire_slot: Some(26), role_label: ""      },
-    BoardSlot { silk: "PA8",  wire_slot: Some(8),  role_label: ""      },
-    BoardSlot { silk: "PA9",  wire_slot: Some(9),  role_label: ""      },
-    BoardSlot { silk: "PA10", wire_slot: Some(10), role_label: ""      },
-    BoardSlot { silk: "PA11", wire_slot: None,     role_label: "USBD-" },
-    BoardSlot { silk: "PA12", wire_slot: None,     role_label: "USBD+" },
-    BoardSlot { silk: "PA15", wire_slot: Some(11), role_label: ""      },
-    BoardSlot { silk: "PB3",  wire_slot: Some(14), role_label: ""      },
-    BoardSlot { silk: "PB4",  wire_slot: Some(15), role_label: ""      },
-    BoardSlot { silk: "PB5",  wire_slot: Some(16), role_label: ""      },
-    BoardSlot { silk: "PB6",  wire_slot: Some(17), role_label: ""      },
-    BoardSlot { silk: "PB7",  wire_slot: Some(18), role_label: ""      },
-    BoardSlot { silk: "PB8",  wire_slot: Some(19), role_label: ""      },
-    BoardSlot { silk: "PB9",  wire_slot: Some(20), role_label: ""      },
-    BoardSlot { silk: "5V",   wire_slot: None,     role_label: "5V"    },
-    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
-    BoardSlot { silk: "3V3",  wire_slot: None,     role_label: "3.3V"  },
+    BoardSlot {
+        silk: "PB12",
+        wire_slot: Some(23),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB13",
+        wire_slot: Some(24),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB14",
+        wire_slot: Some(25),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB15",
+        wire_slot: Some(26),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA8",
+        wire_slot: Some(8),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA9",
+        wire_slot: Some(9),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA10",
+        wire_slot: Some(10),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA11",
+        wire_slot: None,
+        role_label: "USBD-",
+    },
+    BoardSlot {
+        silk: "PA12",
+        wire_slot: None,
+        role_label: "USBD+",
+    },
+    BoardSlot {
+        silk: "PA15",
+        wire_slot: Some(11),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB3",
+        wire_slot: Some(14),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB4",
+        wire_slot: Some(15),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB5",
+        wire_slot: Some(16),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB6",
+        wire_slot: Some(17),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB7",
+        wire_slot: Some(18),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB8",
+        wire_slot: Some(19),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB9",
+        wire_slot: Some(20),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "5V",
+        wire_slot: None,
+        role_label: "5V",
+    },
+    BoardSlot {
+        silk: "GND",
+        wire_slot: None,
+        role_label: "GND",
+    },
+    BoardSlot {
+        silk: "3V3",
+        wire_slot: None,
+        role_label: "3.3V",
+    },
     // -- Right column (UI), top → bottom — A-side of the board --
-    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
-    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
-    BoardSlot { silk: "3V3",  wire_slot: None,     role_label: "3.3V"  },
-    BoardSlot { silk: "RST",  wire_slot: None,     role_label: "Reset" },
-    BoardSlot { silk: "PB11", wire_slot: Some(22), role_label: ""      },
-    BoardSlot { silk: "PB10", wire_slot: Some(21), role_label: ""      },
-    BoardSlot { silk: "PB1",  wire_slot: Some(13), role_label: ""      },
-    BoardSlot { silk: "PB0",  wire_slot: Some(12), role_label: ""      },
-    BoardSlot { silk: "PA7",  wire_slot: Some(7),  role_label: ""      },
-    BoardSlot { silk: "PA6",  wire_slot: Some(6),  role_label: ""      },
-    BoardSlot { silk: "PA5",  wire_slot: Some(5),  role_label: ""      },
-    BoardSlot { silk: "PA4",  wire_slot: Some(4),  role_label: ""      },
-    BoardSlot { silk: "PA3",  wire_slot: Some(3),  role_label: ""      },
-    BoardSlot { silk: "PA2",  wire_slot: Some(2),  role_label: ""      },
-    BoardSlot { silk: "PA1",  wire_slot: Some(1),  role_label: ""      },
-    BoardSlot { silk: "PA0",  wire_slot: Some(0),  role_label: ""      },
-    BoardSlot { silk: "PC15", wire_slot: Some(29), role_label: ""      },
-    BoardSlot { silk: "PC14", wire_slot: Some(28), role_label: ""      },
-    BoardSlot { silk: "PC13", wire_slot: Some(27), role_label: ""      },
-    BoardSlot { silk: "VBUS", wire_slot: None,     role_label: "VBUS"  },
+    BoardSlot {
+        silk: "GND",
+        wire_slot: None,
+        role_label: "GND",
+    },
+    BoardSlot {
+        silk: "GND",
+        wire_slot: None,
+        role_label: "GND",
+    },
+    BoardSlot {
+        silk: "3V3",
+        wire_slot: None,
+        role_label: "3.3V",
+    },
+    BoardSlot {
+        silk: "RST",
+        wire_slot: None,
+        role_label: "Reset",
+    },
+    BoardSlot {
+        silk: "PB11",
+        wire_slot: Some(22),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB10",
+        wire_slot: Some(21),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB1",
+        wire_slot: Some(13),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB0",
+        wire_slot: Some(12),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA7",
+        wire_slot: Some(7),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA6",
+        wire_slot: Some(6),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA5",
+        wire_slot: Some(5),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA4",
+        wire_slot: Some(4),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA3",
+        wire_slot: Some(3),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA2",
+        wire_slot: Some(2),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA1",
+        wire_slot: Some(1),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA0",
+        wire_slot: Some(0),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PC15",
+        wire_slot: Some(29),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PC14",
+        wire_slot: Some(28),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PC13",
+        wire_slot: Some(27),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "VBUS",
+        wire_slot: None,
+        role_label: "VBUS",
+    },
 ];
 
 /// WeAct STM32F411CE BlackPill V3.x pinout in silkscreen order, USB-C
@@ -477,52 +636,212 @@ pub const BLUEPILL_BOARD_LAYOUT: [BoardSlot; BOARD_LAYOUT_LEN] = [
 pub const BLACKPILL_BOARD_LAYOUT: [BoardSlot; BOARD_LAYOUT_LEN] = [
     // -- Left column (UI), top → bottom — board's left header
     // (PB12..PB15 / PA8..PA12 / PA15 / PB3..PB9 / 5V / GND / 3V3) --
-    BoardSlot { silk: "PB12", wire_slot: Some(23), role_label: ""      },
-    BoardSlot { silk: "PB13", wire_slot: Some(24), role_label: ""      },
-    BoardSlot { silk: "PB14", wire_slot: Some(25), role_label: ""      },
-    BoardSlot { silk: "PB15", wire_slot: Some(26), role_label: ""      },
-    BoardSlot { silk: "PA8",  wire_slot: Some(8),  role_label: ""      },
-    BoardSlot { silk: "PA9",  wire_slot: Some(9),  role_label: ""      },
-    BoardSlot { silk: "PA10", wire_slot: Some(10), role_label: ""      },
-    BoardSlot { silk: "PA11", wire_slot: None,     role_label: "USBD-" },
-    BoardSlot { silk: "PA12", wire_slot: None,     role_label: "USBD+" },
-    BoardSlot { silk: "PA15", wire_slot: Some(11), role_label: ""      },
-    BoardSlot { silk: "PB3",  wire_slot: Some(14), role_label: ""      },
-    BoardSlot { silk: "PB4",  wire_slot: Some(15), role_label: ""      },
-    BoardSlot { silk: "PB5",  wire_slot: Some(16), role_label: ""      },
-    BoardSlot { silk: "PB6",  wire_slot: Some(17), role_label: ""      },
-    BoardSlot { silk: "PB7",  wire_slot: Some(18), role_label: ""      },
-    BoardSlot { silk: "PB8",  wire_slot: Some(19), role_label: ""      },
-    BoardSlot { silk: "PB9",  wire_slot: Some(20), role_label: ""      },
-    BoardSlot { silk: "5V",   wire_slot: None,     role_label: "5V"    },
-    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
-    BoardSlot { silk: "3V3",  wire_slot: None,     role_label: "3.3V"  },
+    BoardSlot {
+        silk: "PB12",
+        wire_slot: Some(23),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB13",
+        wire_slot: Some(24),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB14",
+        wire_slot: Some(25),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB15",
+        wire_slot: Some(26),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA8",
+        wire_slot: Some(8),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA9",
+        wire_slot: Some(9),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA10",
+        wire_slot: Some(10),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA11",
+        wire_slot: None,
+        role_label: "USBD-",
+    },
+    BoardSlot {
+        silk: "PA12",
+        wire_slot: None,
+        role_label: "USBD+",
+    },
+    BoardSlot {
+        silk: "PA15",
+        wire_slot: Some(11),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB3",
+        wire_slot: Some(14),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB4",
+        wire_slot: Some(15),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB5",
+        wire_slot: Some(16),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB6",
+        wire_slot: Some(17),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB7",
+        wire_slot: Some(18),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB8",
+        wire_slot: Some(19),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB9",
+        wire_slot: Some(20),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "5V",
+        wire_slot: None,
+        role_label: "5V",
+    },
+    BoardSlot {
+        silk: "GND",
+        wire_slot: None,
+        role_label: "GND",
+    },
+    BoardSlot {
+        silk: "3V3",
+        wire_slot: None,
+        role_label: "3.3V",
+    },
     // -- Right column (UI), top → bottom — board's right header
     // (5V / GND / 3V3 / PB10 / PB2 / PB1 / PB0 / PA7..PA0 /
     //  RESET / PC15 / PC14 / PC13 / VBAT) --
-    BoardSlot { silk: "5V",   wire_slot: None,     role_label: "5V"    },
-    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
-    BoardSlot { silk: "3V3",  wire_slot: None,     role_label: "3.3V"  },
-    BoardSlot { silk: "PB10", wire_slot: Some(21), role_label: ""      },
+    BoardSlot {
+        silk: "5V",
+        wire_slot: None,
+        role_label: "5V",
+    },
+    BoardSlot {
+        silk: "GND",
+        wire_slot: None,
+        role_label: "GND",
+    },
+    BoardSlot {
+        silk: "3V3",
+        wire_slot: None,
+        role_label: "3.3V",
+    },
+    BoardSlot {
+        silk: "PB10",
+        wire_slot: Some(21),
+        role_label: "",
+    },
     // Silk hole "PB2" — die pin PB11, wire slot 22. Same slot as
     // BluePill's "PB11" hole; [`Board::pin_name`] knows about the
     // rename for call sites that don't carry a `BoardSlot`.
-    BoardSlot { silk: "PB2",  wire_slot: Some(22), role_label: ""      },
-    BoardSlot { silk: "PB1",  wire_slot: Some(13), role_label: ""      },
-    BoardSlot { silk: "PB0",  wire_slot: Some(12), role_label: ""      },
-    BoardSlot { silk: "PA7",  wire_slot: Some(7),  role_label: ""      },
-    BoardSlot { silk: "PA6",  wire_slot: Some(6),  role_label: ""      },
-    BoardSlot { silk: "PA5",  wire_slot: Some(5),  role_label: ""      },
-    BoardSlot { silk: "PA4",  wire_slot: Some(4),  role_label: ""      },
-    BoardSlot { silk: "PA3",  wire_slot: Some(3),  role_label: ""      },
-    BoardSlot { silk: "PA2",  wire_slot: Some(2),  role_label: ""      },
-    BoardSlot { silk: "PA1",  wire_slot: Some(1),  role_label: ""      },
-    BoardSlot { silk: "PA0",  wire_slot: Some(0),  role_label: ""      },
-    BoardSlot { silk: "RESET",wire_slot: None,     role_label: "Reset" },
-    BoardSlot { silk: "PC15", wire_slot: Some(29), role_label: ""      },
-    BoardSlot { silk: "PC14", wire_slot: Some(28), role_label: ""      },
-    BoardSlot { silk: "PC13", wire_slot: Some(27), role_label: ""      },
-    BoardSlot { silk: "VBAT", wire_slot: None,     role_label: "VBAT"  },
+    BoardSlot {
+        silk: "PB2",
+        wire_slot: Some(22),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB1",
+        wire_slot: Some(13),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PB0",
+        wire_slot: Some(12),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA7",
+        wire_slot: Some(7),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA6",
+        wire_slot: Some(6),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA5",
+        wire_slot: Some(5),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA4",
+        wire_slot: Some(4),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA3",
+        wire_slot: Some(3),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA2",
+        wire_slot: Some(2),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA1",
+        wire_slot: Some(1),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PA0",
+        wire_slot: Some(0),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "RESET",
+        wire_slot: None,
+        role_label: "Reset",
+    },
+    BoardSlot {
+        silk: "PC15",
+        wire_slot: Some(29),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PC14",
+        wire_slot: Some(28),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "PC13",
+        wire_slot: Some(27),
+        role_label: "",
+    },
+    BoardSlot {
+        silk: "VBAT",
+        wire_slot: None,
+        role_label: "VBAT",
+    },
 ];
 
 /// Why a pin slot is in conflict with the rest of the configuration.
