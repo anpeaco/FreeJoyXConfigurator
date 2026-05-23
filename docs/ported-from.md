@@ -24,7 +24,7 @@ files; the bytes stay the same, only the interpretation changes.
 
 ## What was preserved
 
-- Wire format: byte-identical (`FIRMWARE_VERSION = 0x0010`).
+- Wire format: byte-identical (`FIRMWARE_VERSION = 0x0020`).
 - USB HID protocol: same report IDs, same fragment structure
   (26 × 62-byte payload).
 - Default config: matches the Qt app's `InitConfig()` output.

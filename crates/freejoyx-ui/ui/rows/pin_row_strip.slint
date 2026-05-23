@@ -1,0 +1,154 @@
+import { Palette } from "../globals/palette.slint";
+import { PinRow } from "../types.slint";
+import { DropdownCell } from "../cells/dropdown_cell.slint";
+import { PinJumpButton } from "../cells/pin_jump_button.slint";
+import { PinNameChip } from "pin_name_chip.slint";
+
+// One row of the pin map — a function picker + name chip pair. The
+// `right-side` flag flips the order so on the UI's right column the
+// chip sits to the inside (next to the board image) and the picker
+// on the outside (window edge), mirroring the left column's layout.
+export component PinRowStrip inherits Rectangle {
+    in property <PinRow> entry;
+    in property <length> func-width;
+    in property <bool> right-side: false;
+    /// When equal to `entry.wire-slot`, the strip background pulses
+    /// to mark a "jump-back from Axes / Shift Registers" landing.
+    in property <int> flash-slot: -1;
+    callback dropdown-requested(int /* kind */, int /* slot */, length /* abs-x */, length /* abs-y */, length /* width */);
+    callback jump-clicked(int /* wire-slot */);
+
+    property <bool> flashing:
+        !root.entry.is-locked && root.flash-slot == root.entry.wire-slot;
+    // Subtle wash behind the row so a flashed pin reads as
+    // selected without obscuring the pill / chip text on top.
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: flashing ? Palette.accent : transparent;
+        opacity: flashing ? 0.25 : 0.0;
+        border-color: flashing ? Palette.accent : transparent;
+        border-width: flashing ? 1px : 0px;
+        border-radius: 3px;
+        animate background { duration: 250ms; easing: ease-in-out; }
+        animate opacity { duration: 250ms; easing: ease-in-out; }
+        animate border-color { duration: 250ms; easing: ease-in-out; }
+    }
+
+    HorizontalLayout {
+        spacing: 4px;
+        // Left column ordering: function pill → jump arrow → silkscreen
+        // chip. The jump slot is always reserved on GPIO rows so the
+        // pill column lines up identically across every row (locked
+        // power/USB holes don't get a slot — their `is-locked` path
+        // owns the whole func-width).
+        if !root.right-side && !root.entry.is-locked: DropdownCell {
+            compact: true;
+            center-text: true;
+            value-label: root.entry.function-label;
+            value-width: root.func-width;
+            kind: 0;
+            slot: root.entry.wire-slot;
+            popup-width: 280px;
+            clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+        }
+        if !root.right-side && root.entry.is-locked: locked-left-host := Rectangle {
+            width: root.func-width;
+            height: 26px;
+            background: transparent;
+            // Locked tile: keep the same boxed chrome as the
+            // configurable rows so the row still reads as a cell, but
+            // mute the weight + colour so power / USB / reset holes
+            // visually recede vs. configurable GPIOs.
+            Rectangle {
+                width: root.func-width;
+                height: 22px;
+                y: (parent.height - self.height) / 2;
+                background: Palette.bg-cell-alt;
+                border-color: Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                opacity: 0.75;
+                Text {
+                    text: root.entry.locked-role;
+                    color: Palette.text-dim;
+                    font-size: 12px;
+                    font-weight: 500;
+                    letter-spacing: 0.4px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+        }
+        // Jump button between pill and chip on the left column. The
+        // 22 px slot is reserved on *every* row (locked + non-eligible
+        // included) so the silkscreen-chip column stays vertically
+        // aligned across power / USB / GPIO holes.
+        if !root.right-side: PinJumpButton {
+            eligible: !root.entry.is-locked && root.entry.jump-eligible;
+            enabled: !root.entry.is-locked && root.entry.jump-enabled;
+            icon-family: root.entry.function-family;
+            tooltip:
+                root.entry.function-family == 2 ? "Jump to axis using this pin"
+                : root.entry.function-family == 3 ? "Jump to axis using this encoder"
+                : root.entry.function-family == 6 ? "Jump to shift register fed by this data pin"
+                : "Jump to destination";
+            clicked => { root.jump-clicked(root.entry.wire-slot); }
+        }
+        if !root.right-side: PinNameChip { entry: root.entry; }
+        if root.right-side: PinNameChip { entry: root.entry; }
+        // Right column mirror.
+        if root.right-side: PinJumpButton {
+            eligible: !root.entry.is-locked && root.entry.jump-eligible;
+            enabled: !root.entry.is-locked && root.entry.jump-enabled;
+            icon-family: root.entry.function-family;
+            tooltip:
+                root.entry.function-family == 2 ? "Jump to axis using this pin"
+                : root.entry.function-family == 3 ? "Jump to axis using this encoder"
+                : root.entry.function-family == 6 ? "Jump to shift register fed by this data pin"
+                : "Jump to destination";
+            clicked => { root.jump-clicked(root.entry.wire-slot); }
+        }
+        if root.right-side && !root.entry.is-locked: DropdownCell {
+            compact: true;
+            center-text: true;
+            value-label: root.entry.function-label;
+            value-width: root.func-width;
+            kind: 0;
+            slot: root.entry.wire-slot;
+            popup-width: 280px;
+            clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+        }
+        if root.right-side && root.entry.is-locked: locked-right-host := Rectangle {
+            width: root.func-width;
+            height: 26px;
+            background: transparent;
+            // Mirror of the left-column locked tile — see comment there.
+            Rectangle {
+                width: root.func-width;
+                height: 22px;
+                y: (parent.height - self.height) / 2;
+                background: Palette.bg-cell-alt;
+                border-color: Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                opacity: 0.75;
+                Text {
+                    text: root.entry.locked-role;
+                    color: Palette.text-dim;
+                    font-size: 12px;
+                    font-weight: 500;
+                    letter-spacing: 0.4px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+        }
+    }
+}

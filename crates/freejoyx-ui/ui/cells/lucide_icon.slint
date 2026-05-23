@@ -1,0 +1,15 @@
+import { Palette } from "../globals/palette.slint";
+
+// A Lucide SVG re-tinted with the palette accent / text colour. The
+// SVG ships with `stroke="#000"` so the femtovg-rasterised texture has
+// alpha-correct strokes; `colorize` then multiplies the texture by
+// `tint`. Default size 14 px matches the v0.1 toolbar's 13 px text.
+export component LucideIcon inherits Image {
+    in property <length> size: 14px;
+    in property <color> tint: Palette.text;
+    width: root.size;
+    height: root.size;
+    colorize: root.tint;
+    image-fit: contain;
+    accessible-role: none;
+}

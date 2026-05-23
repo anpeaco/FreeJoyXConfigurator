@@ -30,11 +30,12 @@ the Qt configurator.
 
 ## Supported wire format
 
-- `FIRMWARE_VERSION` mask group **0x0010** (FreeJoyX gen 1).
-- Versions in the same mask group (0x001F build-nibble drift) are
+- `FIRMWARE_VERSION` mask group **0x0020** (FreeJoyX gen 2 — LONG_PRESS
+  → TAP rename; `dev_config_t` byte layout unchanged from gen 1).
+- Versions in the same mask group (0x002F build-nibble drift) are
   accepted.
-- Anything outside that group (legacy 0x17XX, future 0x0020+) is
-  refused with a clear toast.
+- Anything outside that group (legacy 0x17XX, previous gen-1 0x0010,
+  future 0x0030+) is refused with a clear toast.
 
 ## Platforms
 

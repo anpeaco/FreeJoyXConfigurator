@@ -1,0 +1,188 @@
+import { Palette } from "../globals/palette.slint";
+import { Icons } from "../globals/icons.slint";
+import { LucideIcon } from "lucide_icon.slint";
+
+// Compact numeric cell with a stacked +/- stepper column glued to the
+// right edge of the number field. Each stepper is half the field's
+// height; together the column reads as one square spanning the field.
+// Distinct from NumberCell because the existing cell is used widely
+// and the steppers are surplus there; this is opted into per-cell on
+// tabs that want a spinner (e.g. the Shift Registers tab's per-chip /
+// chips / buttons trio).
+//
+// Internal placement is absolute (x/y on the field and stepper rects)
+// rather than nested HorizontalLayouts so the inner positions don't
+// depend on whatever vertical-alignment defaults a nested layout
+// picks — keeps the cell's contents centered no matter the outer row.
+//
+// Emits `edited(int)` on direct typing and on stepper clicks. The cell
+// does NOT clamp internally — the consumer applies its own range rules
+// when reacting to the callback (e.g. clamp + recompute siblings).
+export component SpinCell inherits Rectangle {
+    in property <string> label;
+    in property <int> value;
+    in property <length> field-width: 44px;
+    in property <bool> compact: false;
+    in property <bool> disabled: false;
+    in property <int> step: 1;
+    in property <int> min-value: 0;
+    in property <int> max-value: 255;
+    callback edited(int);
+
+    property <length> field-h: 22px;
+    property <length> stepper-w: 12px;
+    property <length> stepper-h: root.field-h / 2;
+    property <length> composite-w: root.field-width + root.stepper-w;
+
+    // Inline label always rendered as a sibling Text; its presence is
+    // gated by `compact`. Width gets distributed by the outer
+    // HorizontalLayout — the cell itself doesn't reserve label space
+    // beyond what the label Text needs.
+    height: 26px;
+    min-width: root.compact
+        ? root.composite-w
+        : root.composite-w + 50px;
+
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+
+        if !root.compact: Text {
+            text: root.label;
+            color: Palette.text-dim;
+            font-size: 11px;
+            vertical-alignment: center;
+            y: (parent.height - self.height) / 2;
+        }
+
+        // -- field + stepper composite ---------------------------------
+        // Absolute positioning of the three rectangles so the field's
+        // right border lines up with the stepper column's left border
+        // pixel-for-pixel and the two steppers stack evenly. The whole
+        // composite is y-centered within the cell's 26 px outer height.
+        Rectangle {
+            width: root.composite-w;
+            height: root.field-h;
+            y: (parent.height - self.height) / 2;
+            background: transparent;
+
+            // -- field ------------------------------------------------
+            field := Rectangle {
+                x: 0px;
+                y: 0px;
+                width: root.field-width;
+                height: root.field-h;
+                background: root.disabled ? Palette.bg-cell : Palette.bg-cell-alt;
+                border-color: ti.has-focus && !root.disabled ? Palette.accent : Palette.border;
+                border-width: 1px;
+                border-top-left-radius: 3px;
+                border-bottom-left-radius: 3px;
+                opacity: root.disabled ? 0.45 : 1.0;
+                animate border-color { duration: 160ms; }
+
+                ti := TextInput {
+                    text: root.value;
+                    color: Palette.text;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    input-type: number;
+                    read-only: root.disabled;
+                    width: parent.width - 8px;
+                    height: parent.height;
+                    x: 4px;
+                    y: 0px;
+                    edited => {
+                        if (self.text == "" || self.text == "-") {
+                            return;
+                        }
+                        root.edited(self.text.to-float());
+                    }
+                    accepted => { self.clear-focus(); }
+                }
+
+                ta := TouchArea {
+                    enabled: !root.disabled;
+                    mouse-cursor: text;
+                    clicked => { ti.focus(); }
+                }
+            }
+
+            // -- up stepper -------------------------------------------
+            up := Rectangle {
+                x: root.field-width;
+                y: 0px;
+                width: root.stepper-w;
+                height: root.stepper-h;
+                background: up-ta.pressed && !root.disabled
+                    ? Palette.bg-pill
+                    : (up-ta.has-hover && !root.disabled
+                        ? Palette.bg-cell-hover
+                        : Palette.bg-cell-alt);
+                border-color: Palette.border;
+                border-width: 1px;
+                border-top-right-radius: 3px;
+                opacity: root.disabled ? 0.45 : 1.0;
+                animate background { duration: 120ms; easing: ease-out; }
+
+                LucideIcon {
+                    source: Icons.chevron-up;
+                    tint: Palette.text;
+                    size: 9px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                up-ta := TouchArea {
+                    enabled: !root.disabled;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if (root.value + root.step <= root.max-value) {
+                            root.edited(root.value + root.step);
+                        } else {
+                            root.edited(root.max-value);
+                        }
+                    }
+                }
+            }
+
+            // -- down stepper -----------------------------------------
+            down := Rectangle {
+                x: root.field-width;
+                y: root.stepper-h;
+                width: root.stepper-w;
+                height: root.stepper-h;
+                background: down-ta.pressed && !root.disabled
+                    ? Palette.bg-pill
+                    : (down-ta.has-hover && !root.disabled
+                        ? Palette.bg-cell-hover
+                        : Palette.bg-cell-alt);
+                border-color: Palette.border;
+                border-width: 1px;
+                border-bottom-right-radius: 3px;
+                opacity: root.disabled ? 0.45 : 1.0;
+                animate background { duration: 120ms; easing: ease-out; }
+
+                LucideIcon {
+                    source: Icons.chevron-down;
+                    tint: Palette.text;
+                    size: 9px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                down-ta := TouchArea {
+                    enabled: !root.disabled;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if (root.value - root.step >= root.min-value) {
+                            root.edited(root.value - root.step);
+                        } else {
+                            root.edited(root.min-value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,57 @@
+import { Palette } from "../globals/palette.slint";
+import { LucideIcon } from "lucide_icon.slint";
+
+export component TabButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    in property <bool> enabled: true;
+    in property <image> icon-source;
+    /// When true, render a small accent dot to the right of the label
+    /// — signals "this tab holds non-default configuration." Pushed
+    /// from Rust whenever the held `DeviceConfig` changes.
+    in property <bool> has-content: false;
+    callback clicked();
+
+    height: 36px;
+    min-width: 120px;
+    background: root.selected ? Palette.bg-panel : (ta.has-hover && root.enabled ? Palette.bg-cell-hover : Palette.bg-cell);
+    border-color: root.selected ? Palette.accent : Palette.border;
+    border-width: root.selected ? 2px : 1px;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    HorizontalLayout {
+        alignment: center;
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 6px;
+        LucideIcon {
+            source: root.icon-source;
+            tint: root.selected ? Palette.accent : Palette.text;
+            size: 14px;
+            visible: root.icon-source.width > 0;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            color: root.selected ? Palette.accent : Palette.text;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+        // Configured indicator. 6 px accent dot, dimmed when the tab
+        // isn't the active one so the selected-tab amber still pops.
+        Rectangle {
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: Palette.accent;
+            visible: root.has-content;
+            opacity: root.selected ? 1.0 : 0.7;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}

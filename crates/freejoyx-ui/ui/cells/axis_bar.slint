@@ -1,0 +1,61 @@
+import { Palette } from "../globals/palette.slint";
+
+// Dual horizontal progress bar showing a signed value in [-32767, 32767].
+// `value` of 0 maps to the midpoint; negatives extend left, positives
+// extend right. The bar is colored to match the Qt configurator: a
+// darker chrome track with the active region in the supplied accent.
+//
+// When `inactive` is true (no source set / output disabled / not
+// streaming params), the fill is suppressed entirely so the bar reads
+// as a blank track rather than a faint half-fill at the midpoint.
+export component AxisBar inherits Rectangle {
+    in property <int> value: 0;
+    in property <color> fill: #4d4d4d;
+    in property <string> label: "";
+    in property <bool> inactive: false;
+
+    min-height: 16px;
+    background: Palette.bg-cell;
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 3px;
+    clip: true;
+
+    // Clamp value to the signed-16 range. Center maps to half-width.
+    property <int> clamped:
+        root.value > 32767 ? 32767
+        : (root.value < -32767 ? -32767 : root.value);
+    property <float> fraction: (root.clamped + 32767) / 65534.0;
+
+    // Active fill — hidden entirely when inactive so the user sees a
+    // blank track instead of a faint half-pill at value=0.
+    if !root.inactive: Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width * fraction;
+        height: parent.height;
+        background: root.fill;
+    }
+
+    // Center hairline. Always visible so the user can tell where the
+    // midpoint is relative to a partial fill.
+    Rectangle {
+        x: parent.width / 2 - 0.5px;
+        y: 0;
+        width: 1px;
+        height: parent.height;
+        background: Palette.border;
+    }
+
+    Text {
+        text: root.inactive ? "" : root.label;
+        color: Palette.text;
+        font-size: 10px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        x: 4px;
+        y: 0;
+        width: parent.width - 8px;
+        height: parent.height;
+    }
+}

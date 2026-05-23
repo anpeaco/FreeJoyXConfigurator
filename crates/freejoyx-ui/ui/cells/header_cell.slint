@@ -1,0 +1,18 @@
+import { Palette } from "../globals/palette.slint";
+
+export component HeaderCell inherits Rectangle {
+    in property <string> text;
+    in property <length> col-width: 32px;
+    in property <TextHorizontalAlignment> hpad: TextHorizontalAlignment.left;
+    width: root.col-width;
+    Text {
+        text: root.text;
+        color: Palette.text-dim;
+        font-size: 10px;
+        letter-spacing: 0.4px;
+        horizontal-alignment: root.hpad;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+}

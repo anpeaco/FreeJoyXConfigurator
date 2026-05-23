@@ -1,0 +1,32 @@
+import { Palette } from "../globals/palette.slint";
+import { BtnCols } from "../globals/btn_cols.slint";
+import { HeaderCell } from "../cells/header_cell.slint";
+
+// Column-header strip for the Buttons + Logic table. Sits above the
+// Flickable so it stays visible while the rows scroll.
+export component ButtonsHeaderRow inherits Rectangle {
+    height: 24px;
+    background: Palette.bg-panel;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: BtnCols.spacing;
+        HeaderCell { text: "#"; col-width: BtnCols.w-num; hpad: TextHorizontalAlignment.right; }
+        HeaderCell { text: "PHYSICAL"; col-width: BtnCols.w-phy; }
+        HeaderCell { text: "FUNCTION"; col-width: BtnCols.w-type; }
+        HeaderCell { text: "OPERATOR"; col-width: BtnCols.w-op; }
+        HeaderCell { text: "SOURCE B"; col-width: BtnCols.w-srcb; hpad: TextHorizontalAlignment.center; }
+        HeaderCell { text: "SHIFT"; col-width: BtnCols.w-shift; hpad: TextHorizontalAlignment.center; }
+        HeaderCell { text: "DELAY"; col-width: BtnCols.w-delay; hpad: TextHorizontalAlignment.center; }
+        HeaderCell { text: "PRESS"; col-width: BtnCols.w-press; hpad: TextHorizontalAlignment.center; }
+        HeaderCell { text: "INV"; col-width: BtnCols.w-inv; hpad: TextHorizontalAlignment.center; }
+        HeaderCell { text: "DIS"; col-width: BtnCols.w-dis; hpad: TextHorizontalAlignment.center; }
+        Rectangle { horizontal-stretch: 1; }
+        HeaderCell { text: "LIVE"; col-width: BtnCols.w-live; hpad: TextHorizontalAlignment.center; }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Palette.border;
+    }
+}

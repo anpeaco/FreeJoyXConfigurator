@@ -1,0 +1,279 @@
+// All shared structs that cross file boundaries. Each one mirrors a
+// Rust-side type and shows up both on AppWindow's property surface and
+// inside the component that renders it.
+//
+// Slint requires every file that names one of these in an `in property
+// <Foo>` to import it explicitly — there is no implicit re-export.
+
+// pin-name is the silkscreen label ("PA0"), function-label is the
+// human-readable role name, function-index is the index into the
+// global PinFunction list (used for the dropdown round-trip without
+// inventing a Slint enum mirror), conflict-msg is non-empty when the
+// validator flagged this row.
+export struct PinRow {
+    pin-name: string,
+    /// Wire-byte index (0..29) into `dev_config_t.pins[]` for
+    /// configurable GPIOs. `-1` for fixed-role holes (`is-locked: true`)
+    /// where there's no dropdown.
+    wire-slot: int,
+    /// `true` for fixed-function holes (GND / 3V3 / 5V / RST / VBUS /
+    /// USBD-/-D+). The row renders `locked-role` as a static label
+    /// instead of a `DropdownCell`, and the schematic chip greys out.
+    is-locked: bool,
+    /// Display label for locked holes (e.g. "GND", "3.3V", "Reset").
+    /// Empty for GPIO rows.
+    locked-role: string,
+    function-label: string,
+    function-index: int,
+    /// Visual family code from `PinFunctionFamily::to_u8` — drives the
+    /// leading icon on the function cell. Values: 0=NotUsed, 1=Button,
+    /// 2=Axis, 3=Encoder, 4=Bus, 5=Sensor, 6=ShiftReg, 7=Led, 8=RgbLed.
+    function-family: int,
+    conflict-msg: string,
+    /// Short role abbreviation rendered on the board-view chip (e.g.
+    /// "Btn", "Axis", "Enc"). Empty for `NotUsed`.
+    family-short: string,
+    /// True when the row's function category can carry a jump
+    /// destination (AxisAnalog / FastEncoder / ShiftRegData). The
+    /// button slot is always reserved on GPIO rows so the layout
+    /// stays uniform; this just toggles whether the slot renders an
+    /// arrow at all.
+    jump-eligible: bool,
+    /// True when the row's function has a *concrete* destination
+    /// right now (an axis points to this pin, or this is a Data pin
+    /// whose ordinal fits in `MAX_SHIFT_REG_NUM`). When eligible but
+    /// not enabled, the button greys out — the pin is assigned but
+    /// nothing on the destination tab references it yet.
+    jump-enabled: bool,
+}
+
+// One entry in an inline dropdown list. Used across every tab — the
+// Buttons-tab Type / Shift / LOGIC Op / LOGIC Debounce columns, the
+// Axes filter / resolution / channel cells, the Encoders mode cells,
+// the Shift Registers type cell, and the Pins Function cell.
+//
+// Header rows (`is-header: true`) render as non-clickable category
+// labels — only the grouped pickers (Type column, Pin Function) emit
+// them. Flat lists set `is-header: false` on every row.
+//
+// `blocked` greys the entry and shows `blocked-reason` inline (only
+// used by the Buttons-tab Type column today; other pickers leave
+// `blocked: false` on every entry).
+export struct DropdownEntry {
+    is-header: bool,
+    label: string,
+    value: int,
+    blocked: bool,
+    blocked-reason: string,
+}
+
+export struct AxisRow {
+    title: string,
+    has-source: bool,
+    source-label: string,
+    source-handle: int,
+    out-enabled: bool,
+    inverted: bool,
+    is-centered: bool,
+    calib-min: int,
+    calib-center: int,
+    calib-max: int,
+    filter-index: int,
+    filter-label: string,
+    deadband-size: int,
+    is-dynamic-deadband: bool,
+    resolution: int,
+    channel: int,
+    live-raw: int,
+    live-out: int,
+    calibrating: bool,
+    detect-armed: bool,
+    detect-disarm-tick: int,
+    /// True when source is `Pin(N)` or `Encoder(N)` *and* the
+    /// corresponding pin is actually assigned in `pins[]`. Drives
+    /// the "←" back-to-pin button next to the source dropdown.
+    back-to-pin-enabled: bool,
+    /// Phase 1 of the advanced axes port: per-row collapse/expand
+    /// state for the "Show extended settings" panel. Driven by Rust
+    /// (`State::axes_extended_expanded[slot]`).
+    extended-expanded: bool,
+    /// `AxisFunction` picker — selects the operator that combines
+    /// this axis with the axis indexed by `function-axis-index`.
+    function-label: string,
+    function-index: int,
+    /// `source_secondary` 3-bit field — index of the other axis (0..7)
+    /// the function uses. Only meaningful when `function-index != 0`.
+    function-axis-index: int,
+    function-axis-label: string,
+    /// `offset_angle * 15` — display value in degrees (0, 15, 30, ...
+    /// 465). Stored raw on the wire as a 5-bit field.
+    offset-deg: int,
+    /// `divider` u8 — Qt's "Step div".
+    step-div: int,
+    /// `prescaler` u8 — Qt's "Prescaler %".
+    prescaler: int,
+    /// Phase 2: axis-to-buttons count (`axes_to_buttons[i].buttons_cnt`,
+    /// 0..=12). Editing it does NOT re-space `points[13]`; the
+    /// firmware uses `points[0..=cnt]`.
+    buttons-from-axes: int,
+    /// Three axis-triggered button slots — pressing the physical
+    /// button at `btn-N-slot` applies the action at `btn-N-action`.
+    /// `slot` is an i8 (matches `button1/2/3` on the wire); -1 = unused.
+    btn1-slot: int,
+    btn1-action-label: string,
+    btn1-action-index: int,
+    btn2-slot: int,
+    btn2-action-label: string,
+    btn2-action-index: int,
+    btn3-slot: int,
+    btn3-action-label: string,
+    btn3-action-index: int,
+    /// Phase 3: I2C device address. Only meaningful when the axis's
+    /// source is I2C; `i2c-enabled` flips false for other sources
+    /// (dropdown is then greyed but the wire byte preserved).
+    i2c-addr-label: string,
+    i2c-addr-index: int,
+    i2c-enabled: bool,
+}
+
+export struct ButtonRow {
+    // Wire slot index (0..127). The model can be filtered or reordered,
+    // so the for-loop position is no longer authoritative for callbacks.
+    slot: int,
+    physical-num: int,
+    type-label: string,
+    type-index: int,
+    is-logic: bool,
+    shift-modificator: int,
+    is-inverted: bool,
+    is-disabled: bool,
+    // Operator / Source B — surfaced on every row but disabled (via the
+    // `*-enabled` flags below) when the row's type isn't LOGIC.
+    src-b: int,
+    op-label: string,
+    op-index: int,
+    op-enabled: bool,
+    src-b-enabled: bool,
+    /// Truth-table summary for LOGIC rows ("Fires when …"). Empty on
+    /// non-LOGIC rows. Surfaces as a hover tooltip on the Op cell.
+    op-tooltip: string,
+    // Delay / Press timer pickers — `flags_c` bits 0..=2 / 3..=5.
+    // Surfaced on every row; enabled state is driven by the row's type.
+    delay-label: string,
+    delay-index: int,
+    delay-enabled: bool,
+    press-label: string,
+    press-index: int,
+    press-enabled: bool,
+    logic-error: string,
+    // Live state
+    phy-pressed: bool,
+    log-pressed: bool,
+    // Disarm ticks: Rust bumps these to tell the corresponding cell to
+    // drop capture mode (successful press capture, or another cell
+    // arming). Cells observe via `changed disarm-tick`.
+    physical-disarm-tick: int,
+    src-b-disarm-tick: int,
+}
+
+export struct ShiftSlot {
+    label: string,
+    button-index: int,
+}
+
+export struct TimerField {
+    label: string,
+    hint: string,
+    value-ms: int,
+}
+
+export struct EncoderRow {
+    label: string,
+    mode-label: string,
+    mode-index: int,
+    /// Wire-side index into `dev_config_t.encoders[]`. For the soft
+    /// section this is `row + MAX_FAST_ENCODER_NUM` (i.e. 2..15) — the
+    /// fast slots 0/1 are vestigial in the soft section and aren't
+    /// rendered. Callbacks emit this so dispatch lands on the right
+    /// `encoders[]` cell regardless of how rows are filtered.
+    wire-slot: int,
+    /// True when this slot has a derived A/B button pairing in
+    /// `buttons[]`. Unpaired rows are dimmed and the swap button is
+    /// disabled.
+    paired: bool,
+    /// "btn 12 ↔ btn 30" when `paired`; empty otherwise.
+    pair-label: string,
+    /// Live activity indicators driven by the params report's
+    /// `log_button_data` bit at the paired A / B button slot. Lit while
+    /// the encoder press window is open (firmware holds the bit for
+    /// `encoder_press_time_ms`).
+    cw-active: bool,
+    ccw-active: bool,
+}
+
+export struct FastEncoderRow {
+    label: string,
+    enabled: bool,
+    mode-label: string,
+    mode-index: int,
+    hint: string,
+}
+
+export struct ShiftRegRow {
+    label: string,
+    type-label: string,
+    type-index: int,
+    button-count: int,
+    /// Per-row UI factoring of `button-count`: how many inputs each
+    /// chip exposes (default 8). Stored as Rust-side UI state, not
+    /// on the wire — `button-count` is the only persisted value.
+    buttons-per-chip: int,
+    /// Number of daisy-chained chips, derived from
+    /// `button-count / buttons-per-chip` for display. Editing it
+    /// drives `button-count = buttons-per-chip * num-chips`.
+    num-chips: int,
+    /// True when a `ShiftRegData` pin exists for this row's ordinal —
+    /// drives the "←" back-to-pin button. False when no Data pin has
+    /// been assigned for this SR slot yet.
+    back-to-pin-enabled: bool,
+}
+
+// Device-name (up to 26 bytes), VID, PID. Firmware version and board
+// id are rendered read-only — they come straight off the wire. The
+// device picker is in the toolbar; this tab is for fields that are
+// persisted on the connected board.
+export struct AdvancedModel {
+    device-name: string,
+    vid-hex: string,
+    pid-hex: string,
+    firmware-version-hex: string,
+    board-id: int,
+    freejoyx-version: string,
+}
+
+export struct DeviceOption {
+    label: string,
+    serial: string,
+    is-current: bool,
+}
+
+// `LogEntry` mirrors `LogEvent` with strings pre-formatted on the
+// Rust side — Slint expressions don't have date/time formatting, so
+// the timestamp comes through as `HH:MM:SS.mmm` text.
+export struct LogEntry {
+    timestamp: string,
+    level: int,        // matches LogLevel::ui_index (0=Trace .. 4=Error)
+    level-label: string,
+    category: int,     // matches EventCategory::ui_index
+    category-label: string,
+    message: string,
+    fields-summary: string,
+}
+
+// One row in the categories filter strip. Each category gets a
+// checkbox-style chip that toggles its bit in the live DebugFilter.
+export struct CategoryChip {
+    label: string,
+    on: bool,
+    category-index: int,
+}

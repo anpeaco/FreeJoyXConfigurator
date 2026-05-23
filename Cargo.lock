@@ -1440,6 +1440,7 @@ dependencies = [
  "slint",
  "slint-build",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

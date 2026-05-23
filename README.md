@@ -17,7 +17,7 @@ in Rust + Slint. The Qt app stays the authoritative tool until this
 one reaches v0.1 (target: ~4 weeks of focused work) — see Port.md §1
 for the goal/non-goal scope. The Qt app continues to support legacy
 firmware versions; the Rust app targets only the current FreeJoyX
-wire-format generation (`FIRMWARE_VERSION = 0x0010`).
+wire-format generation (`FIRMWARE_VERSION = 0x0020`).
 
 ## Layout
 

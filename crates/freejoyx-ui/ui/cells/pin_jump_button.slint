@@ -1,0 +1,109 @@
+import { Palette } from "../globals/palette.slint";
+import { TooltipState } from "../globals/tooltip.slint";
+import { Icons } from "../globals/icons.slint";
+import { LucideIcon } from "lucide_icon.slint";
+
+// Tiny "→" button shown between the function pill and the silkscreen
+// chip. The slot is always reserved on GPIO rows (uniform layout);
+// `eligible` controls whether the arrow appears at all (locked rows
+// + functions without a jump target hide it entirely), and `enabled`
+// controls whether the arrow is interactive. An eligible-but-disabled
+// button reads as "unmapped — assign on the destination tab".
+export component PinJumpButton inherits Rectangle {
+    in property <bool> eligible: false;
+    in property <bool> enabled: false;
+    /// `PinFunctionFamily::to_u8` — drives which icon appears: 2=Axis
+    /// (sliders), 3=Encoder (rotate-cw), 6=ShiftReg (layers). Other
+    /// families fall back to a generic chevron. Tint follows the
+    /// enabled state so a greyed button reads as "destination known
+    /// but unmapped" rather than "broken".
+    in property <int> icon-family: 0;
+    in property <string> tooltip: "";
+    callback clicked();
+
+    // 26 px outer host follows the row-cell sizing rule (see top of
+    // file). 22 px visual is y-centred inside via `inner.y`.
+    width: 22px;
+    height: 26px;
+    background: transparent;
+    opacity: root.eligible
+        ? (root.enabled ? 1.0 : 0.35)
+        : 0.0;
+
+    property <bool> held: ta.pressed && root.enabled;
+
+    inner := Rectangle {
+        width: 22px;
+        height: 22px;
+        y: ((parent.height - self.height) / 2) + (held ? 1px : 0px);
+        animate y { duration: held ? 30ms : 180ms; easing: ease-out; }
+        background: held
+            ? Palette.bg-pill
+            : (root.enabled && ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt);
+        animate background { duration: held ? 30ms : 180ms; easing: ease-out; }
+        border-color: held ? Palette.text-dim : Palette.border;
+        animate border-color { duration: held ? 30ms : 180ms; easing: ease-out; }
+        border-width: 1px;
+        border-radius: 3px;
+
+        // On press the inner frame sinks 1 px; the icon tint dims so
+        // the whole pill reads as inset.
+        if root.icon-family == 2: LucideIcon {
+            source: Icons.axes;
+            tint: held ? Palette.text-dim : (root.enabled ? Palette.accent : Palette.text-dim);
+            size: 13px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+        if root.icon-family == 3: LucideIcon {
+            source: Icons.encoders;
+            tint: held ? Palette.text-dim : (root.enabled ? Palette.accent : Palette.text-dim);
+            size: 13px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+        if root.icon-family == 6: LucideIcon {
+            source: Icons.shift-registers;
+            tint: held ? Palette.text-dim : (root.enabled ? Palette.accent : Palette.text-dim);
+            size: 13px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+        // Fallback for any future jump-eligible family that doesn't have
+        // a dedicated glyph: keep the arrow so the slot still reads as
+        // "click to jump" without leaving a blank pill.
+        if root.icon-family != 2 && root.icon-family != 3 && root.icon-family != 6: Text {
+            text: "→";
+            color: held ? Palette.text-dim : (root.enabled ? Palette.accent : Palette.text-dim);
+            font-size: 14px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            height: parent.height;
+        }
+
+        ta := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+
+    // Tooltip publish/clear. `hovered` is the canonical hover state
+    // (only true when there's actually text to display) so the
+    // `changed` handler fires once per real edge, not once per
+    // hover-with-no-tooltip.
+    property <bool> hovered: ta.has-hover && root.enabled && root.tooltip != "";
+    changed hovered => {
+        if (hovered) {
+            TooltipState.text = root.tooltip;
+            TooltipState.anchor-x = inner.absolute-position.x;
+            TooltipState.anchor-y = inner.absolute-position.y + inner.height + 4px;
+            TooltipState.visible = true;
+        } else if (TooltipState.text == root.tooltip) {
+            TooltipState.visible = false;
+            TooltipState.text = "";
+        }
+    }
+}

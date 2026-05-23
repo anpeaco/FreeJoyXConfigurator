@@ -52,14 +52,19 @@ fn every_fixture_decodes_without_error() {
 }
 
 #[test]
-fn fixture_firmware_version_matches_target() {
-    // Per Port.md §9, every captured device runs FIRMWARE_VERSION = 0x0010.
+fn fixture_firmware_version_is_historical_0x0010() {
+    // The bundled fixtures were captured on devices running
+    // FIRMWARE_VERSION = 0x0010 (pre-TAP-rename). Since the 0x0010 →
+    // 0x0020 bump was a SEMANTIC-only change (LONG_PRESS → TAP), the
+    // captured bytes still exercise the current codec's shape — the
+    // version field itself is the only divergence from a fresh 0x0020
+    // capture. See fixtures/REGEN.md for the formal recapture path.
     for set in ["minimal", "wide_coverage"] {
         let bytes = load_config(set);
         let cfg = DeviceConfig::decode(&bytes).unwrap();
         assert_eq!(
             cfg.firmware_version, 0x0010,
-            "{set}: firmware_version 0x{:04x} != 0x0010",
+            "{set}: firmware_version 0x{:04x} != 0x0010 (historical capture)",
             cfg.firmware_version
         );
     }

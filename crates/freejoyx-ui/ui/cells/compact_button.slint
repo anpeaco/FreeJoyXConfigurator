@@ -1,0 +1,72 @@
+import { Palette } from "../globals/palette.slint";
+import { TooltipState } from "../globals/tooltip.slint";
+
+// Compact labeled button. Same height as IconButton; used for actions
+// where the verb reads better than any available glyph (Calibrate).
+// 26 px outer / 22 px inner per the row-cell rule.
+export component CompactButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> pressed: false;
+    in property <bool> enabled: true;
+    in property <string> tooltip: "";
+    callback clicked();
+
+    height: 26px;
+    min-width: 64px;
+    background: transparent;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    // See IconButton for the armed/held split.
+    property <bool> armed: root.pressed && root.enabled;
+    property <bool> held: ta.pressed && root.enabled;
+
+    inner := Rectangle {
+        width: parent.width;
+        height: 22px;
+        y: ((parent.height - self.height) / 2) + (held ? 1px : 0px);
+        animate y { duration: held ? 30ms : 180ms; easing: ease-out; }
+        background: armed
+            ? Palette.accent
+            : (held
+                ? Palette.bg-pill
+                : (ta.has-hover && root.enabled ? Palette.bg-cell-hover : Palette.bg-cell-alt));
+        animate background { duration: held ? 30ms : 180ms; easing: ease-out; }
+        border-color: armed
+            ? Palette.accent
+            : (held ? Palette.text-dim : Palette.border);
+        animate border-color { duration: held ? 30ms : 180ms; easing: ease-out; }
+        border-width: 1px;
+        border-radius: 3px;
+
+        Text {
+            text: root.label;
+            color: armed ? Palette.bg-window : (held ? Palette.text-dim : Palette.text);
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            x: 6px;
+            y: 0;
+            width: parent.width - 12px;
+            height: parent.height;
+        }
+
+        ta := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+
+    property <bool> hovered: ta.has-hover && root.enabled && root.tooltip != "";
+    changed hovered => {
+        if (hovered) {
+            TooltipState.text = root.tooltip;
+            TooltipState.anchor-x = inner.absolute-position.x;
+            TooltipState.anchor-y = inner.absolute-position.y + inner.height + 4px;
+            TooltipState.visible = true;
+        } else if (TooltipState.text == root.tooltip) {
+            TooltipState.visible = false;
+            TooltipState.text = "";
+        }
+    }
+}

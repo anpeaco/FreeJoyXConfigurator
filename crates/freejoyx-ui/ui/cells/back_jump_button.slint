@@ -1,0 +1,68 @@
+import { Palette } from "../globals/palette.slint";
+import { TooltipState } from "../globals/tooltip.slint";
+import { Icons } from "../globals/icons.slint";
+import { LucideIcon } from "lucide_icon.slint";
+
+// Reverse-jump "←" button used on the Axes + Shift Registers tabs to
+// hop back to the originating pin row on the Pins tab. Same visual
+// language as PinJumpButton (amber arrow when active, dim grey when
+// disabled, identical width so layouts stay consistent) — just
+// pointing the other way.
+export component BackJumpButton inherits Rectangle {
+    in property <bool> enabled: false;
+    in property <string> tooltip: "";
+    callback clicked();
+
+    width: 22px;
+    height: 26px;
+    background: transparent;
+    opacity: root.enabled ? 1.0 : 0.35;
+
+    property <bool> held: ta.pressed && root.enabled;
+
+    inner := Rectangle {
+        width: 22px;
+        height: 22px;
+        y: ((parent.height - self.height) / 2) + (held ? 1px : 0px);
+        animate y { duration: held ? 30ms : 180ms; easing: ease-out; }
+        background: held
+            ? Palette.bg-pill
+            : (root.enabled && ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt);
+        animate background { duration: held ? 30ms : 180ms; easing: ease-out; }
+        border-color: held ? Palette.text-dim : Palette.border;
+        animate border-color { duration: held ? 30ms : 180ms; easing: ease-out; }
+        border-width: 1px;
+        border-radius: 3px;
+
+        // The destination is always the Pins tab — re-use the Pins tab's
+        // own icon so the visual language stays symmetric with the
+        // forward `PinJumpButton` (whose icon matches the destination
+        // tab's icon too).
+        LucideIcon {
+            source: Icons.pins;
+            tint: held ? Palette.text-dim : (root.enabled ? Palette.accent : Palette.text-dim);
+            size: 13px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+
+        ta := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+
+    property <bool> hovered: ta.has-hover && root.enabled && root.tooltip != "";
+    changed hovered => {
+        if (hovered) {
+            TooltipState.text = root.tooltip;
+            TooltipState.anchor-x = inner.absolute-position.x;
+            TooltipState.anchor-y = inner.absolute-position.y + inner.height + 4px;
+            TooltipState.visible = true;
+        } else if (TooltipState.text == root.tooltip) {
+            TooltipState.visible = false;
+            TooltipState.text = "";
+        }
+    }
+}

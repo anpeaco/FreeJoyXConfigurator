@@ -1,0 +1,87 @@
+import { Palette } from "../globals/palette.slint";
+
+// Calibration-range bar — a horizontal track showing where the axis's
+// min / center / max landmarks sit within the full int16 range.
+// Mirrors the Qt configurator's range slider (visual only — there's no
+// drag interaction, those values are edited via the numeric spinboxes).
+//
+// Layout:
+//
+//   |  red region from min to max  |
+//   |     ^min        ^ctr      ^max
+//
+// `is-centered = false` hides the centre marker (matches the firmware
+// behaviour: centre is meaningless without the centred flag).
+export component CalibRangeBar inherits Rectangle {
+    in property <int> calib-min: -32767;
+    in property <int> calib-center: 0;
+    in property <int> calib-max: 32767;
+    in property <bool> is-centered: false;
+
+    min-height: 10px;
+    background: Palette.bg-cell;
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 3px;
+    clip: true;
+
+    // Clamp + fraction helpers. Static int16 bounds — keep them inline
+    // so the bindings stay self-evident.
+    function clamp(v: int) -> int {
+        v > 32767 ? 32767 : (v < -32767 ? -32767 : v)
+    }
+    function frac(v: int) -> float {
+        (clamp(v) + 32767) / 65534.0
+    }
+
+    // Range fill: from min to max. Direction-agnostic — if the user
+    // has min > max (inverted config), the fill still spans the
+    // |min, max| interval rather than rendering negative-width.
+    property <float> fmin: frac(root.calib-min);
+    property <float> fmax: frac(root.calib-max);
+    property <float> flo: fmin < fmax ? fmin : fmax;
+    property <float> fhi: fmin < fmax ? fmax : fmin;
+
+    Rectangle {
+        x: parent.width * flo;
+        y: 0;
+        width: parent.width * (fhi - flo);
+        height: parent.height;
+        background: #a03030;
+    }
+
+    // Centre hairline (always visible) so the user can locate the
+    // axis midpoint at a glance.
+    Rectangle {
+        x: parent.width / 2 - 0.5px;
+        y: 0;
+        width: 1px;
+        height: parent.height;
+        background: Palette.border;
+    }
+
+    // Marker thumbs. Each is a 2 px vertical bar sitting above the
+    // track, drawn in the cell's accent so the eye picks them out
+    // against the red fill.
+    Rectangle {
+        x: parent.width * fmin - 1px;
+        y: 0;
+        width: 2px;
+        height: parent.height;
+        background: Palette.accent;
+    }
+    Rectangle {
+        x: parent.width * fmax - 1px;
+        y: 0;
+        width: 2px;
+        height: parent.height;
+        background: Palette.accent;
+    }
+    if root.is-centered: Rectangle {
+        x: parent.width * frac(root.calib-center) - 1px;
+        y: 0;
+        width: 2px;
+        height: parent.height;
+        background: Palette.text;
+    }
+}

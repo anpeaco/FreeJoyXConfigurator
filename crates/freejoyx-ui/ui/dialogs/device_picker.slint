@@ -1,0 +1,39 @@
+import { Palette } from "../globals/palette.slint";
+import { DeviceOption } from "../types.slint";
+
+export component DevicePickerRow inherits Rectangle {
+    in property <DeviceOption> entry;
+    callback picked();
+
+    height: 30px;
+    background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell;
+    border-color: root.entry.is-current ? Palette.accent : Palette.border;
+    border-width: 1px;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: root.entry.is-current ? Palette.accent : transparent;
+            border-color: Palette.border;
+            border-width: 1px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.entry.label;
+            color: Palette.text;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+
+    ta := TouchArea {
+        clicked => { root.picked(); }
+    }
+}

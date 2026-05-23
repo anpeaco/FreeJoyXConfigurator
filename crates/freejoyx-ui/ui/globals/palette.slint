@@ -1,0 +1,26 @@
+// Theme switch. `dark` toggles every colour token between the dark
+// cockpit palette and a light alternate. Rust side (settings.rs) loads
+// the persisted choice at startup and writes it back when the Help
+// menu's "Switch to … Mode" item is clicked.
+//
+// Visual style per Style.MD: dark cockpit panel (#2a2a32) on near-black
+// window, amber accent (#ffcc33), light-grey text, single 1 px borders.
+export global Palette {
+    in-out property <bool> dark: true;
+
+    out property <color> bg-window: dark ? #000000 : #e8e8ec;
+    out property <color> bg-panel: dark ? #2a2a32 : #f4f4f6;
+    out property <color> bg-cell: dark ? #1a1a1e : #ffffff;
+    out property <color> bg-cell-alt: dark ? #1e1e22 : #f8f8fa;
+    out property <color> bg-cell-hover: dark ? #1f1f23 : #ececf0;
+    out property <color> bg-pill: dark ? #1e1e22 : #ebebef;
+    out property <color> bg-pill-hover: dark ? #2e2e34 : #dcdce0;
+    out property <color> border: dark ? #3a3a44 : #c0c0c8;
+    out property <color> text: dark ? #c8c8d0 : #1a1a1e;
+    out property <color> text-dim: dark ? #8a8a96 : #5a5a64;
+    out property <color> accent: dark ? #ffcc33 : #cc8800;
+    out property <color> error: dark ? #d65a5a : #a02828;
+    out property <color> error-bg: dark ? #553333 : #f4caca;
+    out property <color> success: dark ? #6cb86c : #2a7a2a;
+    out property <color> bg-warn: dark ? #4a3a1a : #fbe9bf;
+}

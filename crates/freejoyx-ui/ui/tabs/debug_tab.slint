@@ -1,0 +1,228 @@
+import { Palette } from "../globals/palette.slint";
+import { LogEntry, CategoryChip } from "../types.slint";
+import { CompactButton } from "../cells/compact_button.slint";
+import { DropdownCell } from "../cells/dropdown_cell.slint";
+
+// In-app console for the structured event stream (see
+// `freejoyx-ui::debug_log` on the Rust side). One row per `LogEvent`
+// plus a header bar with verbosity / category / clear / export
+// controls. The console is virtualized through a Flickable so 5000
+// rows render without slowing the tab switch.
+export component DebugTab inherits Rectangle {
+    in property <[LogEntry]> entries;
+    in property <int> verbosity-index: 2;   // Info by default
+    in property <string> verbosity-label: "INFO";
+    in property <[CategoryChip]> categories;
+    in property <bool> auto-scroll: true;
+    in property <bool> verbose-config: false;
+    in property <int> total-count: 0;
+    in property <int> dropped-count: 0;     // events filtered by category/level
+    callback verbosity-clicked(int /* kind */, int /* slot */, length, length, length);
+    callback category-toggled(int /* category index */);
+    callback clear-clicked();
+    callback export-clicked();
+    callback auto-scroll-toggled();
+    callback verbose-config-toggled();
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        // `alignment: start` packs the header / controls / events-count
+        // at the top so the log body's `vertical-stretch: 1` absorbs
+        // every leftover pixel. Without this the layout's default
+        // `stretch` distributes the gap between all children and the
+        // console floats at the bottom.
+        alignment: start;
+
+        Text {
+            text: "Debug";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Live structured-event stream. Verbosity + category filters are applied at capture time, so toggling them on retroactively only affects future events. Stderr + the daily-rotated `freejoyx-app.log` continue to receive everything.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        // Row 1 — verbosity dropdown + category chips. Sized 26 px per
+        // the row-cell rule; chips wrap nothing on this row so a window
+        // narrower than the chip set clips them rather than overflowing
+        // the action buttons.
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            HorizontalLayout {
+                spacing: 4px;
+                Text {
+                    text: "min level";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                DropdownCell {
+                    compact: true;
+                    value-label: root.verbosity-label;
+                    value-width: 96px;
+                    kind: 14;  // DropdownKind::DebugVerbosity
+                    slot: -1;
+                    popup-width: 120px;
+                    clicked(k, s, x, y, w) => { root.verbosity-clicked(k, s, x, y, w); }
+                }
+            }
+            for cat[i] in root.categories: Rectangle {
+                width: 78px;
+                height: 26px;
+                inner-cat := Rectangle {
+                    width: parent.width;
+                    height: 22px;
+                    y: (parent.height - self.height) / 2;
+                    background: cat.on ? Palette.accent : Palette.bg-cell-alt;
+                    border-color: cat.on ? Palette.accent : Palette.border;
+                    border-width: 1px;
+                    border-radius: 3px;
+                    Text {
+                        text: cat.label;
+                        color: cat.on ? Palette.bg-window : Palette.text;
+                        font-size: 11px;
+                        font-weight: 600;
+                        letter-spacing: 0.4px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.category-toggled(cat.category-index); }
+                    }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        // Row 2 — action buttons. Split off the controls row so the
+        // four toggles/actions don't overflow the panel at the 960 px
+        // window minimum. `pressed:` on the toggles surfaces state, so
+        // the labels stay short.
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            CompactButton {
+                label: "Auto-scroll";
+                pressed: root.auto-scroll;
+                tooltip: "Toggle automatic scroll to the newest entry";
+                clicked => { root.auto-scroll-toggled(); }
+            }
+            CompactButton {
+                label: "Verbose config";
+                pressed: root.verbose-config;
+                tooltip: "Dump raw bytes + parsed contents of every Read/Write Config (~5 KB per exchange)";
+                clicked => { root.verbose-config-toggled(); }
+            }
+            CompactButton {
+                label: "Clear";
+                tooltip: "Empty the in-memory buffer (does not affect the daily log file)";
+                clicked => { root.clear-clicked(); }
+            }
+            CompactButton {
+                label: "Export…";
+                tooltip: "Write the current buffer to a timestamped .log file";
+                clicked => { root.export-clicked(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        Text {
+            text: "events: " + root.entries.length + " (buffer total " + root.total-count + ")";
+            color: Palette.text-dim;
+            font-size: 11px;
+        }
+
+        // Console body. Monospace, dense rows, level-coloured.
+        Rectangle {
+            vertical-stretch: 1;
+            background: Palette.bg-cell;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 4px;
+            clip: true;
+
+            fl := Flickable {
+                viewport-height: root.entries.length * 18px + 8px;
+                // Auto-scroll bumps viewport-y to the bottom whenever a
+                // new entry lands. Driven from Rust via the `entries`
+                // property changing — we watch `entries.length` here.
+                changed entries-len => {
+                    if (root.auto-scroll) {
+                        fl.viewport-y = -((root.entries.length * 18px + 8px) - fl.height);
+                        if (fl.viewport-y > 0px) {
+                            fl.viewport-y = 0px;
+                        }
+                    }
+                }
+                property <int> entries-len: root.entries.length;
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 0px;
+                    for entry[i] in root.entries: HorizontalLayout {
+                        height: 18px;
+                        spacing: 8px;
+                        Text {
+                            text: entry.timestamp;
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                            font-family: "Consolas";
+                            vertical-alignment: center;
+                            width: 88px;
+                        }
+                        Text {
+                            text: entry.level-label;
+                            color:
+                                entry.level == 4 ? Palette.error :
+                                entry.level == 3 ? #ffb84d :
+                                entry.level == 2 ? Palette.text :
+                                entry.level == 1 ? Palette.text-dim :
+                                Palette.text-dim;
+                            font-size: 11px;
+                            font-family: "Consolas";
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            width: 44px;
+                        }
+                        Text {
+                            text: entry.category-label;
+                            color: Palette.accent;
+                            font-size: 11px;
+                            font-family: "Consolas";
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            width: 60px;
+                        }
+                        Text {
+                            text: entry.message;
+                            color: Palette.text;
+                            font-size: 11px;
+                            font-family: "Consolas";
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: entry.fields-summary;
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                            font-family: "Consolas";
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

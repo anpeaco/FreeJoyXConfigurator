@@ -1,0 +1,122 @@
+import { Palette } from "../globals/palette.slint";
+import { TooltipState } from "../globals/tooltip.slint";
+import { Icons } from "../globals/icons.slint";
+import { LucideIcon } from "lucide_icon.slint";
+
+// Inline dropdown cell — the visual pill + chevron. Used by every
+// Type / Shift / Op / Debounce / Filter / Mode picker across the
+// configurator (issue #15). Replaces the old `CycleCell` step-cycle
+// pattern *and* the `TypePickerOverlay` modal.
+//
+// The cell DOES NOT host its own popup. Slint 1.13's `PopupWindow`
+// positions incorrectly and swallows pointer events when its parent
+// chain crosses a `Flickable` (rows tab, axes list, pin list, etc.) —
+// the popup appears at the Flickable's origin and clicks fall through
+// to the underlying scroll viewport. Instead, on click the cell emits
+// `clicked(kind, slot, abs-x, abs-y, width)` upward: AppWindow owns a
+// single global overlay anchored on the absolute coords the cell
+// reports, keeping the overlay outside every Flickable and giving
+// pointer events a clean path.
+//
+// Properties:
+//
+// - `kind` / `slot` — identify which picker the cell belongs to and
+//   which row inside that picker. Rust dispatches the picked value
+//   back to the right setter via this pair. The well-known kind values
+//   are listed alongside `DropdownKind` on the Rust side.
+// - `popup-width` — width of the overlay panel; defaults to the cell
+//   width when caller passes 0. Useful when entry labels (e.g. the
+//   Type column's blocked-reason text) need more room than the cell.
+export component DropdownCell inherits Rectangle {
+    in property <string> value-label;
+    in property <length> value-width: 100px;
+    in property <bool> compact: false;
+    in property <int> kind: -1;
+    in property <int> slot: -1;
+    in property <length> popup-width: 0px;
+    /// Render the value label centred inside the pill. Used by the
+    /// new Pins tab where the function picker sits on the outside
+    /// edges of the row and centre-aligned text reads cleaner than
+    /// the default left-alignment.
+    in property <bool> center-text: false;
+    /// Grey-out + ignore clicks. Used by Buttons tab to disable
+    /// Operator / timer pickers on rows where they don't apply.
+    in property <bool> disabled: false;
+    /// Hover help text. Published to the global `TooltipState` while
+    /// the pointer is over the pill; empty string = no tooltip.
+    in property <string> tooltip: "";
+    callback clicked(int /* kind */, int /* slot */, length /* abs-x */, length /* abs-y */, length /* width */);
+
+    width: root.value-width;
+    height: 26px;
+
+    pill := Rectangle {
+        width: root.value-width;
+        height: 22px;
+        background: root.disabled
+            ? Palette.bg-cell
+            : (ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt);
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 3px;
+        opacity: root.disabled ? 0.45 : 1.0;
+        x: 0;
+        y: (parent.height - self.height) / 2;
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 4px;
+            if root.center-text: Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: root.value-label;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-alignment: root.center-text
+                    ? TextHorizontalAlignment.center
+                    : TextHorizontalAlignment.left;
+                overflow: elide;
+            }
+            // Explicit stretch spacer pins the chevron to the right
+            // edge — relying on `horizontal-stretch` on the Text alone
+            // ends up centring the chevron when the label is short.
+            Rectangle { horizontal-stretch: 1; }
+            LucideIcon {
+                source: Icons.chevron-down;
+                tint: Palette.text-dim;
+                size: 12px;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        ta := TouchArea {
+            enabled: !root.disabled;
+            mouse-cursor: pointer;
+            clicked => {
+                root.clicked(
+                    root.kind,
+                    root.slot,
+                    pill.absolute-position.x,
+                    pill.absolute-position.y + pill.height + 2px,
+                    root.popup-width > 0px ? root.popup-width : root.value-width);
+            }
+        }
+    }
+
+    // Tooltip publish/clear. Mirrors the pattern used by `PinJumpButton`
+    // — `hovered` is the canonical "real hover with text" edge so the
+    // `changed` handler fires once per real transition.
+    property <bool> hovered: ta.has-hover && !root.disabled && root.tooltip != "";
+    changed hovered => {
+        if (hovered) {
+            TooltipState.text = root.tooltip;
+            TooltipState.anchor-x = pill.absolute-position.x;
+            TooltipState.anchor-y = pill.absolute-position.y + pill.height + 4px;
+            TooltipState.visible = true;
+        } else if (TooltipState.text == root.tooltip) {
+            TooltipState.visible = false;
+            TooltipState.text = "";
+        }
+    }
+}

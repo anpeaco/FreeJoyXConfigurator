@@ -1,0 +1,574 @@
+import { Palette } from "../globals/palette.slint";
+import { Icons } from "../globals/icons.slint";
+import { AxisRow } from "../types.slint";
+import { AxisBar } from "../cells/axis_bar.slint";
+import { CalibRangeBar } from "../cells/calib_range_bar.slint";
+import { BackJumpButton } from "../cells/back_jump_button.slint";
+import { CheckCell } from "../cells/check_cell.slint";
+import { CompactButton } from "../cells/compact_button.slint";
+import { DropdownCell } from "../cells/dropdown_cell.slint";
+import { IconButton } from "../cells/icon_button.slint";
+import { NumberCell } from "../cells/number_cell.slint";
+
+export component AxisRowView inherits Rectangle {
+    in property <AxisRow> entry;
+    in property <int> slot;
+    callback out-toggled(int);
+    callback inverted-toggled(int);
+    callback centered-toggled(int);
+    callback calib-min-edited(int, int);
+    callback calib-center-edited(int, int);
+    callback calib-max-edited(int, int);
+    callback deadband-edited(int, int);
+    callback dyn-deadband-toggled(int);
+    callback dropdown-requested(int, int, length, length, length);
+    callback calibrate-toggled(int);
+    callback reset-clicked(int);
+    callback set-center-clicked(int);
+    callback detect-toggled(int);
+    callback back-to-pin-clicked(int);
+    /// Phase 1 advanced-axes: chevron-toggle for the extended-settings
+    /// panel. Rust flips the per-row bool in `State::axes_extended_expanded`.
+    callback extended-toggled(int);
+    callback offset-edited(int, int);
+    callback step-div-edited(int, int);
+    callback prescaler-edited(int, int);
+    callback buttons-from-axes-edited(int, int);
+    callback btn1-slot-edited(int, int);
+    callback btn2-slot-edited(int, int);
+    callback btn3-slot-edited(int, int);
+    /// When this matches `root.slot`, the card pulses to highlight a
+    /// "jump from Pins tab" landing. AppWindow drives the value through
+    /// AxesTab and clears it after ~1.5 s via a Rust-side timer.
+    in property <int> flash-slot: -1;
+
+    // Card height is driven by has-source + extended-expanded.
+    //   no source              -> 48 px (header only)
+    //   has source, collapsed  -> 188 px (body with calibration range bar)
+    //   has source, expanded   -> 188 + 224 = 412 px (body + extended panel)
+    // Both tiers must stay in lockstep with AXIS_ROW_EXPANDED_PX and
+    // AXIS_ROW_EXTENDED_EXTRA_PX in app.rs (Rust recomputes the parent
+    // Flickable's viewport-height from those constants).
+    height: root.entry.has-source
+        ? (root.entry.extended-expanded ? 412px : 188px)
+        : 48px;
+    property <bool> flashing: root.flash-slot == root.slot;
+    background: flashing ? Palette.accent : Palette.bg-cell;
+    border-color: flashing ? Palette.accent : Palette.border;
+    border-width: flashing ? 2px : 1px;
+    border-radius: 4px;
+    animate background { duration: 250ms; easing: ease-in-out; }
+    animate border-color { duration: 250ms; easing: ease-in-out; }
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+
+        // Header (always visible): title, Source dropdown, Detect button,
+        // and a right-hand Output / Inverted strip. These are the
+        // controls that matter even when the body is collapsed (Output
+        // is greyed out via has-source, but Source itself drives the
+        // expand/collapse so it has to live here).
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                text: root.entry.title;
+                color: Palette.accent;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+                width: 60px;
+            }
+            DropdownCell {
+                compact: true;
+                value-label: root.entry.source-label;
+                value-width: 150px;
+                kind: 13;  // DropdownKind::AxisSource
+                slot: root.slot;
+                popup-width: 200px;
+                clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+            }
+            // Back-to-pin: greyed when source has no pin (None / I2C /
+            // unassigned encoder pair). Click jumps to Pins tab and
+            // flashes the originating pin row.
+            BackJumpButton {
+                enabled: root.entry.back-to-pin-enabled;
+                tooltip: "Jump to source pin on the Pins tab";
+                clicked => { root.back-to-pin-clicked(root.slot); }
+            }
+            IconButton {
+                icon-source: Icons.axis-detect;
+                pressed: root.entry.detect-armed;
+                tooltip: root.entry.detect-armed
+                    ? "Cancel auto-detect"
+                    : "Auto-detect: arm, then move the physical axis to bind its source here";
+                clicked => { root.detect-toggled(root.slot); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            CheckCell {
+                label: "Output";
+                checked: root.entry.has-source && root.entry.out-enabled;
+                toggled => { root.out-toggled(root.slot); }
+            }
+            CheckCell {
+                label: "Inverted";
+                checked: root.entry.inverted;
+                toggled => { root.inverted-toggled(root.slot); }
+            }
+        }
+
+        // Body — only rendered when a source is set. The card shrinks
+        // to the header-only height when no source is configured, so
+        // a typical 1-2 axis build doesn't bury the user under six
+        // empty cards.
+        if root.entry.has-source: VerticalLayout {
+            spacing: 6px;
+
+            // Bars + calibrate/reset/center cluster.
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: stretch;
+                VerticalLayout {
+                    spacing: 3px;
+                    horizontal-stretch: 1;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Out";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            width: 28px;
+                        }
+                        AxisBar {
+                            horizontal-stretch: 1;
+                            value: root.entry.live-out;
+                            fill: #b03030;
+                            label: root.entry.live-out;
+                            inactive: !root.entry.out-enabled;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Raw";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            width: 28px;
+                        }
+                        AxisBar {
+                            horizontal-stretch: 1;
+                            value: root.entry.live-raw;
+                            fill: #4a8a4a;
+                            label: root.entry.live-raw;
+                            inactive: false;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 4px;
+                    width: 96px;
+                    CompactButton {
+                        label: root.entry.calibrating ? "Stop && Save" : "Calibrate";
+                        pressed: root.entry.calibrating;
+                        tooltip: root.entry.calibrating
+                            ? "Finish calibration and save the captured range"
+                            : "Start calibration: move the axis through its full range";
+                        clicked => { root.calibrate-toggled(root.slot); }
+                    }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        IconButton {
+                            icon-source: Icons.axis-reset;
+                            tooltip: "Reset calibration (min -32767, max 32767, no centre)";
+                            clicked => { root.reset-clicked(root.slot); }
+                        }
+                        IconButton {
+                            icon-source: Icons.axis-set-center;
+                            tooltip: "Set centre to current raw value";
+                            clicked => { root.set-center-clicked(root.slot); }
+                        }
+                    }
+                }
+            }
+
+            // Calibration range visualization: a thin horizontal bar
+            // showing the active calibration window (filled red) inside
+            // the full int16 range, plus thumb markers at min / max
+            // (always) and ctr (only when centered).
+            CalibRangeBar {
+                height: 10px;
+                calib-min: root.entry.calib-min;
+                calib-center: root.entry.calib-center;
+                calib-max: root.entry.calib-max;
+                is-centered: root.entry.is-centered;
+            }
+
+            // min / ctr / max + Centered.
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                NumberCell {
+                    label: "min";
+                    value: root.entry.calib-min;
+                    field-width: 64px;
+                    edited(v) => { root.calib-min-edited(root.slot, v); }
+                }
+                NumberCell {
+                    label: "ctr";
+                    value: root.entry.calib-center;
+                    field-width: 64px;
+                    disabled: !root.entry.is-centered;
+                    edited(v) => { root.calib-center-edited(root.slot, v); }
+                }
+                NumberCell {
+                    label: "max";
+                    value: root.entry.calib-max;
+                    field-width: 64px;
+                    edited(v) => { root.calib-max-edited(root.slot, v); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                // axes_to_buttons[i].buttons_cnt — how many points of the
+                // 13-segment axis-to-buttons table are active. Editing
+                // this doesn't touch the points themselves.
+                NumberCell {
+                    label: "btns from axes";
+                    value: root.entry.buttons-from-axes;
+                    field-width: 40px;
+                    edited(v) => { root.buttons-from-axes-edited(root.slot, v); }
+                }
+                CheckCell {
+                    label: "Centered";
+                    checked: root.entry.is-centered;
+                    toggled => { root.centered-toggled(root.slot); }
+                }
+            }
+
+            // filter / deadband / dyn / resolution / channel.
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                HorizontalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "filter";
+                        color: Palette.text-dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    DropdownCell {
+                        compact: true;
+                        value-label: root.entry.filter-label;
+                        value-width: 76px;
+                        kind: 6;  // DropdownKind::AxisFilter
+                        slot: root.slot;
+                        popup-width: 120px;
+                        clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+                    }
+                }
+                NumberCell {
+                    label: "dead";
+                    value: root.entry.deadband-size;
+                    field-width: 48px;
+                    edited(v) => { root.deadband-edited(root.slot, v); }
+                }
+                CheckCell {
+                    label: "Dyn";
+                    checked: root.entry.is-dynamic-deadband;
+                    toggled => { root.dyn-deadband-toggled(root.slot); }
+                }
+                HorizontalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "res";
+                        color: Palette.text-dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    DropdownCell {
+                        compact: true;
+                        value-label: root.entry.resolution;
+                        value-width: 36px;
+                        kind: 7;  // DropdownKind::AxisResolution
+                        slot: root.slot;
+                        popup-width: 64px;
+                        clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "ch";
+                        color: Palette.text-dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    DropdownCell {
+                        compact: true;
+                        value-label: root.entry.channel;
+                        value-width: 36px;
+                        kind: 8;  // DropdownKind::AxisChannel
+                        slot: root.slot;
+                        popup-width: 64px;
+                        clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                // Show / hide the extended-settings panel docked below
+                // the body. Icon flips between chevron-down (collapsed)
+                // and chevron-up (expanded). Sits at the bottom-right of
+                // the body so it reads as "toggle what's underneath me."
+                IconButton {
+                    icon-source: root.entry.extended-expanded
+                        ? Icons.chevron-up
+                        : Icons.chevron-down;
+                    tooltip: root.entry.extended-expanded
+                        ? "Hide extended settings"
+                        : "Show extended settings";
+                    clicked => { root.extended-toggled(root.slot); }
+                }
+            }
+
+            // Extended-settings panel: function group + (Phase 2) the
+            // axis-action buttons. Two name+cell columns of small inputs
+            // and pickers, then the buttons block below them.
+            if root.entry.extended-expanded: Rectangle {
+                background: Palette.bg-cell-alt;
+                border-color: Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+                    HorizontalLayout {
+                        spacing: 24px;
+                        // Left column: Function + I2C address + Step div.
+                        VerticalLayout {
+                            spacing: 6px;
+                            horizontal-stretch: 1;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Text {
+                                    text: "Function";
+                                    color: Palette.text-dim;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                    width: 88px;
+                                }
+                                DropdownCell {
+                                    compact: true;
+                                    value-label: root.entry.function-label;
+                                    value-width: 96px;
+                                    kind: 15;  // DropdownKind::AxisFunction
+                                    slot: root.slot;
+                                    popup-width: 120px;
+                                    clicked(k, s, x, y, w) => {
+                                        root.dropdown-requested(k, s, x, y, w);
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Text {
+                                    text: "I2C address";
+                                    color: Palette.text-dim;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                    width: 88px;
+                                }
+                                DropdownCell {
+                                    compact: true;
+                                    // Greyed when the axis source isn't
+                                    // I2C — wire byte is preserved but
+                                    // editing it would be meaningless.
+                                    disabled: !root.entry.i2c-enabled;
+                                    value-label: root.entry.i2c-addr-label;
+                                    value-width: 96px;
+                                    kind: 20;  // DropdownKind::AxisI2cAddress
+                                    slot: root.slot;
+                                    popup-width: 132px;
+                                    clicked(k, s, x, y, w) => {
+                                        root.dropdown-requested(k, s, x, y, w);
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Text {
+                                    text: "Step div";
+                                    color: Palette.text-dim;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                    width: 88px;
+                                }
+                                NumberCell {
+                                    compact: true;
+                                    value: root.entry.step-div;
+                                    field-width: 56px;
+                                    edited(v) => { root.step-div-edited(root.slot, v); }
+                                }
+                            }
+                        }
+                        // Right column: Function axis + Prescaler + Offset.
+                        VerticalLayout {
+                            spacing: 6px;
+                            horizontal-stretch: 1;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Text {
+                                    text: "Function axis";
+                                    color: Palette.text-dim;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                    width: 96px;
+                                }
+                                DropdownCell {
+                                    compact: true;
+                                    disabled: root.entry.function-index == 0;
+                                    value-label: root.entry.function-axis-label;
+                                    value-width: 80px;
+                                    kind: 16;  // DropdownKind::AxisFunctionRef
+                                    slot: root.slot;
+                                    popup-width: 120px;
+                                    clicked(k, s, x, y, w) => {
+                                        root.dropdown-requested(k, s, x, y, w);
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Text {
+                                    text: "Prescaler %";
+                                    color: Palette.text-dim;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                    width: 96px;
+                                }
+                                NumberCell {
+                                    compact: true;
+                                    value: root.entry.prescaler;
+                                    field-width: 56px;
+                                    edited(v) => { root.prescaler-edited(root.slot, v); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Text {
+                                    text: "Offset °";
+                                    color: Palette.text-dim;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                    width: 96px;
+                                }
+                                NumberCell {
+                                    compact: true;
+                                    value: root.entry.offset-deg;
+                                    field-width: 56px;
+                                    edited(v) => { root.offset-edited(root.slot, v); }
+                                }
+                            }
+                        }
+                    }
+                    // Phase 2: three axis-triggered button slots. Each
+                    // row has a Physical-number spinbox and an action
+                    // dropdown. Slot 2's action dropdown is intrinsically
+                    // narrower (2-bit wire field) — Rust filters its
+                    // entries.
+                    Rectangle { height: 4px; background: transparent; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Text {
+                            text: "Button 1";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            width: 64px;
+                        }
+                        NumberCell {
+                            compact: true;
+                            value: root.entry.btn1-slot;
+                            field-width: 48px;
+                            edited(v) => { root.btn1-slot-edited(root.slot, v); }
+                        }
+                        DropdownCell {
+                            compact: true;
+                            value-label: root.entry.btn1-action-label;
+                            value-width: 116px;
+                            kind: 17;  // DropdownKind::AxisButtonAction1
+                            slot: root.slot;
+                            popup-width: 160px;
+                            clicked(k, s, x, y, w) => {
+                                root.dropdown-requested(k, s, x, y, w);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Text {
+                            text: "Button 2";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            width: 64px;
+                        }
+                        NumberCell {
+                            compact: true;
+                            value: root.entry.btn2-slot;
+                            field-width: 48px;
+                            edited(v) => { root.btn2-slot-edited(root.slot, v); }
+                        }
+                        DropdownCell {
+                            compact: true;
+                            value-label: root.entry.btn2-action-label;
+                            value-width: 116px;
+                            kind: 18;  // DropdownKind::AxisButtonAction2
+                            slot: root.slot;
+                            popup-width: 160px;
+                            clicked(k, s, x, y, w) => {
+                                root.dropdown-requested(k, s, x, y, w);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Text {
+                            text: "Button 3";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            width: 64px;
+                        }
+                        NumberCell {
+                            compact: true;
+                            value: root.entry.btn3-slot;
+                            field-width: 48px;
+                            edited(v) => { root.btn3-slot-edited(root.slot, v); }
+                        }
+                        DropdownCell {
+                            compact: true;
+                            value-label: root.entry.btn3-action-label;
+                            value-width: 116px;
+                            kind: 19;  // DropdownKind::AxisButtonAction3
+                            slot: root.slot;
+                            popup-width: 160px;
+                            clicked(k, s, x, y, w) => {
+                                root.dropdown-requested(k, s, x, y, w);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

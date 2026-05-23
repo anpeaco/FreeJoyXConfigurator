@@ -1,0 +1,93 @@
+import { Palette } from "../globals/palette.slint";
+import { ShiftSlot, TimerField } from "../types.slint";
+import { NumberCell } from "../cells/number_cell.slint";
+
+export component ShiftsTimersTab inherits Rectangle {
+    in property <[ShiftSlot]> shifts;
+    in property <[TimerField]> timers;
+    callback shift-edited(int /* slot */, int /* button index */);
+    callback timer-edited(int /* index */, int /* ms */);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        Text {
+            text: "Shifts";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Shifts pick the button index that activates each modifier slot (−1 = unused). Timers configure debounce / tap windows; values are in milliseconds.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: "Shift modifier slots";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        for shift-data[i] in root.shifts: Rectangle {
+            height: 30px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: shift-data.label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    width: 80px;
+                    vertical-alignment: center;
+                }
+                NumberCell {
+                    label: "button";
+                    value: shift-data.button-index;
+                    field-width: 64px;
+                    edited(v) => { root.shift-edited(i, v); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle { height: 8px; }
+        Text {
+            text: "Global timers (ms)";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        for timer-data[i] in root.timers: Rectangle {
+            height: 30px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: timer-data.label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    width: 130px;
+                    vertical-alignment: center;
+                }
+                NumberCell {
+                    label: "ms";
+                    value: timer-data.value-ms;
+                    field-width: 72px;
+                    edited(v) => { root.timer-edited(i, v); }
+                }
+                Text {
+                    text: timer-data.hint;
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+    }
+}

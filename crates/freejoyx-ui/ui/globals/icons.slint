@@ -1,0 +1,61 @@
+// Single source of truth for every SVG icon used in the UI.
+//
+// To swap an icon (e.g. tab strip's "Pins" symbol from `pin` to
+// `circuit-board`) drop a new SVG into `crates/freejoyx-ui/assets/icons/`
+// and update the binding here — every consumer (tab strip, axis row's
+// jump-back arrow, shift-register row, button row, etc.) picks up the
+// change in one place.
+//
+// Lucide icons (kebab-case names match the Lucide library) live under
+// `crates/freejoyx-ui/assets/icons/`; the LICENSE.md alongside them is
+// the Lucide ISC notice.
+export global Icons {
+    // Tab strip icons. The `pins` slot also flows into anywhere that
+    // means "a configurable pin" — back-jump buttons on the Axes /
+    // Shift Registers rows, the pin-name chip's family overlay, etc.
+    out property <image> pins: @image-url("../../assets/icons/circuit-board.svg");
+    out property <image> axes: @image-url("../../assets/icons/sliders-horizontal.svg");
+    out property <image> buttons: @image-url("../../assets/icons/gamepad-directional.svg");
+    out property <image> shifts-timers: @image-url("../../assets/icons/timer.svg");
+    out property <image> encoders: @image-url("../../assets/icons/circle-gauge.svg");
+    out property <image> shift-registers: @image-url("../../assets/icons/layers.svg");
+    out property <image> advanced: @image-url("../../assets/icons/settings.svg");
+    out property <image> debug: @image-url("../../assets/icons/circle-alert.svg");
+
+    // Toolbar action icons.
+    out property <image> devices: @image-url("../../assets/icons/cpu.svg");
+    out property <image> load-file: @image-url("../../assets/icons/folder-open.svg");
+    out property <image> save-file: @image-url("../../assets/icons/save.svg");
+    out property <image> read-device: @image-url("../../assets/icons/download.svg");
+    out property <image> write-device: @image-url("../../assets/icons/upload.svg");
+    out property <image> help: @image-url("../../assets/icons/help-circle.svg");
+    out property <image> log-folder: @image-url("../../assets/icons/folder.svg");
+    out property <image> theme-light: @image-url("../../assets/icons/sun.svg");
+    out property <image> theme-dark: @image-url("../../assets/icons/moon.svg");
+
+    // Inline-cell icons.
+    out property <image> chevron-down: @image-url("../../assets/icons/chevron-down.svg");
+    out property <image> chevron-up: @image-url("../../assets/icons/chevron-up.svg");
+    out property <image> close: @image-url("../../assets/icons/x.svg");
+    out property <image> filter: @image-url("../../assets/icons/filter.svg");
+    out property <image> add: @image-url("../../assets/icons/plus.svg");
+
+    // Axis-row inline buttons.
+    out property <image> axis-detect: @image-url("../../assets/icons/radar.svg");
+    out property <image> axis-reset: @image-url("../../assets/icons/refresh-cw.svg");
+    out property <image> axis-set-center: @image-url("../../assets/icons/target.svg");
+
+    // Encoders-tab inline indicators + actions.
+    out property <image> rotate-cw: @image-url("../../assets/icons/rotate-cw.svg");
+    out property <image> rotate-ccw: @image-url("../../assets/icons/rotate-ccw.svg");
+    out property <image> swap-pair: @image-url("../../assets/icons/arrow-left-right.svg");
+
+    // Toast / inline status icons.
+    out property <image> alert: @image-url("../../assets/icons/circle-alert.svg");
+    out property <image> warning: @image-url("../../assets/icons/triangle-alert.svg");
+    out property <image> info: @image-url("../../assets/icons/info.svg");
+
+    // Unsaved-state chip on the toolbar identity card. Alias of
+    // `alert` today — split if it ever wants a distinct glyph.
+    out property <image> unsaved: @image-url("../../assets/icons/circle-alert.svg");
+}

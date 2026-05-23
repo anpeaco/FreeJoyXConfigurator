@@ -1,0 +1,223 @@
+import { Palette } from "../globals/palette.slint";
+import { Icons } from "../globals/icons.slint";
+import { EncoderRow, FastEncoderRow } from "../types.slint";
+import { CheckCell } from "../cells/check_cell.slint";
+import { DropdownCell } from "../cells/dropdown_cell.slint";
+import { LucideIcon } from "../cells/lucide_icon.slint";
+import { IconButton } from "../cells/icon_button.slint";
+
+// 14 soft encoder rows (wire slots 2..15 of encoders[]) plus 2 fast
+// encoder slots (enabled flag + mode). The fast slots own
+// encoders_state[0..1] regardless of the encoders[0..1] cells, so we
+// hide those vestigial rows from the soft section to match the Qt
+// configurator's behaviour. Fast encoder pins are silicon-locked on
+// F103 (PA8/PA9 = Fast 1, PB6/PB7 = Fast 2) so they're configured by
+// setting the FastEncoder PinFunction on those pins via the Pins tab.
+export component EncodersTab inherits Rectangle {
+    in property <[EncoderRow]> soft;
+    in property <[FastEncoderRow]> fast;
+    callback fast-enabled-toggled(int);
+    callback dropdown-requested(int, int, length, length, length);
+    callback swap-pair-clicked(int);
+    callback jump-to-buttons-clicked(int /* wire-slot */);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+        alignment: start;
+
+        Text {
+            text: "Encoders";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Soft encoders wire two button slots (type ENCODER_INPUT_A / B) to a software quadrature decoder. Fast encoders use the F103's hardware timers — pins are silicon-locked (PA8/PA9 = Fast 1, PB6/PB7 = Fast 2) and assigned via the Pins tab.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: "Fast (hardware) encoders";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        for fast-data[i] in root.fast: Rectangle {
+            height: 32px;
+            background: Palette.bg-cell;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 4px;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                Text {
+                    text: fast-data.label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    width: 80px;
+                    vertical-alignment: center;
+                }
+                CheckCell {
+                    label: "Enabled";
+                    checked: fast-data.enabled;
+                    toggled => { root.fast-enabled-toggled(i); }
+                }
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    Text {
+                        text: "mode";
+                        color: Palette.text-dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    DropdownCell {
+                        compact: true;
+                        value-label: fast-data.mode-label;
+                        value-width: 50px;
+                        kind: 10;  // DropdownKind::EncoderFastMode
+                        slot: i;
+                        popup-width: 80px;
+                        clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+                    }
+                }
+                Text {
+                    text: fast-data.hint;
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle { height: 8px; }
+        Text {
+            text: "Soft (software) encoders";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        Flickable {
+            vertical-stretch: 1;
+            viewport-height: soft.length * 30px;
+            VerticalLayout {
+                spacing: 2px;
+                for soft-data[i] in root.soft: Rectangle {
+                    height: 28px;
+                    background: Palette.bg-cell;
+                    border-color: Palette.border;
+                    border-width: 1px;
+                    border-radius: 3px;
+                    // Greyed out when no A/B pair has been derived for
+                    // this slot — the mode picker still works (the
+                    // user might be configuring ahead of the buttons
+                    // tab), but the row carries no live activity.
+                    opacity: soft-data.paired ? 1.0 : 0.55;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        Text {
+                            text: soft-data.label;
+                            color: Palette.text;
+                            font-size: 12px;
+                            width: 80px;
+                            vertical-alignment: center;
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            alignment: start;
+                            Text {
+                                text: "mode";
+                                color: Palette.text-dim;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                            DropdownCell {
+                                compact: true;
+                                value-label: soft-data.mode-label;
+                                value-width: 50px;
+                                kind: 9;  // DropdownKind::EncoderSoftMode
+                                slot: soft-data.wire-slot;
+                                popup-width: 80px;
+                                clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+                            }
+                        }
+                        // Derived A/B pairing — "btn 12 ↔ btn 30". Empty
+                        // (and the row dim) when no pair was found.
+                        Text {
+                            text: soft-data.paired ? soft-data.pair-label : "no A/B pair";
+                            color: Palette.text-dim;
+                            font-size: 11px;
+                            font-italic: !soft-data.paired;
+                            vertical-alignment: center;
+                            width: 130px;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        // CCW (Encoder B fires) — left-turn indicator.
+                        Rectangle {
+                            width: 24px;
+                            height: 20px;
+                            border-radius: 3px;
+                            background: soft-data.ccw-active ? Palette.accent : Palette.bg-cell-alt;
+                            border-width: 1px;
+                            border-color: Palette.border;
+                            LucideIcon {
+                                source: Icons.rotate-ccw;
+                                size: 13px;
+                                tint: soft-data.ccw-active ? Palette.bg-window : Palette.text-dim;
+                            }
+                        }
+                        // CW (Encoder A fires) — right-turn indicator.
+                        Rectangle {
+                            width: 24px;
+                            height: 20px;
+                            border-radius: 3px;
+                            background: soft-data.cw-active ? Palette.accent : Palette.bg-cell-alt;
+                            border-width: 1px;
+                            border-color: Palette.border;
+                            LucideIcon {
+                                source: Icons.rotate-cw;
+                                size: 13px;
+                                tint: soft-data.cw-active ? Palette.bg-window : Palette.text-dim;
+                            }
+                        }
+                        // Swap-pair button — exchanges the physical_num
+                        // bytes on the paired A/B slots so the encoder
+                        // rotation reads CW where the user's knob turns
+                        // CW. Disabled on unpaired rows. Uses the
+                        // shared IconButton so the click feedback is
+                        // consistent with the rest of the UI.
+                        IconButton {
+                            icon-source: Icons.swap-pair;
+                            enabled: soft-data.paired;
+                            tooltip: soft-data.paired
+                                ? "Swap A/B physical inputs (invert direction)"
+                                : "";
+                            clicked => { root.swap-pair-clicked(soft-data.wire-slot); }
+                        }
+                        // Jump to Buttons tab + flash the paired A/B
+                        // button-slot rows. Disabled (greyed) on rows
+                        // where no A/B pair has been derived yet.
+                        IconButton {
+                            icon-source: Icons.buttons;
+                            enabled: soft-data.paired;
+                            tooltip: soft-data.paired
+                                ? "Highlight the A/B button slots on the Buttons tab"
+                                : "";
+                            clicked => { root.jump-to-buttons-clicked(soft-data.wire-slot); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

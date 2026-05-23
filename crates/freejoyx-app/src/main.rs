@@ -21,9 +21,14 @@ use std::time::{Duration, Instant};
 
 use freejoyx_core::wire::{format_config, ParamsReport};
 use freejoyx_device::{enumerate, spawn_for_serial, Command, DeviceEvent};
+use freejoyx_ui::debug_log::{
+    BufferLayer, DebugFilter, DebugFilterHandle, LogBuffer,
+};
 
 fn main() -> ExitCode {
-    let _log_guard = init_tracing();
+    let log_buffer = LogBuffer::new();
+    let filter_handle = DebugFilterHandle::new(DebugFilter::default_filter());
+    let _log_guard = init_tracing(log_buffer.clone(), filter_handle.clone());
 
     let mut args = env::args().skip(1).collect::<Vec<_>>().into_iter();
     let cmd = args.next();
@@ -33,7 +38,7 @@ fn main() -> ExitCode {
         Some("list") => run_list(),
         Some("watch") => run_watch(serial),
         Some("read-config") => run_read_config(serial),
-        Some("ui") | None => run_ui(serial),
+        Some("ui") | None => run_ui(serial, log_buffer, filter_handle),
         Some("--help" | "-h" | "help") => {
             print_help();
             ExitCode::SUCCESS
@@ -46,8 +51,12 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_ui(serial: Option<String>) -> ExitCode {
-    match freejoyx_ui::run(serial) {
+fn run_ui(
+    serial: Option<String>,
+    log_buffer: LogBuffer,
+    filter: DebugFilterHandle,
+) -> ExitCode {
+    match freejoyx_ui::run(serial, log_buffer, filter) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("UI failed to start: {e}");
@@ -77,12 +86,20 @@ fn parse_serial_flag(args: Vec<String>) -> Option<String> {
 /// in [`freejoyx_ui::log_dir`]. Returns the non-blocking-writer guard
 /// for the file layer; dropping it on shutdown lets pending writes
 /// flush.
-fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+fn init_tracing(
+    log_buffer: LogBuffer,
+    filter_handle: DebugFilterHandle,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    // EnvFilter governs which events the subscriber forwards at all.
+    // Set the floor to TRACE so the in-app BufferLayer can decide
+    // per-event (via DebugFilter) which to keep — otherwise an env
+    // var of `info` would silently drop the trace events the Debug
+    // tab might want to surface when the user opts in.
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("trace"));
 
     let log_dir = freejoyx_ui::log_dir::resolve();
     let (file_layer, guard) = match std::fs::create_dir_all(&log_dir) {
@@ -101,10 +118,13 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
         Err(_) => (None, None),
     };
 
+    let buffer_layer = BufferLayer::new(log_buffer, filter_handle);
+
     tracing_subscriber::registry()
-        .with(filter)
+        .with(env_filter)
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(file_layer)
+        .with(buffer_layer)
         .init();
 
     guard

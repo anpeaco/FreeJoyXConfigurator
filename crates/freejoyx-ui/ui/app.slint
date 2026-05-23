@@ -1,2319 +1,70 @@
-// FreeJoyXConfigurator Slint shell — Slice 5.
+// FreeJoyXConfigurator Slint shell.
+//
+// This file is the top of the UI tree: it imports every component and
+// wires the AppWindow's property + callback surface to them. The body
+// of each component lives in its own file under `ui/`.
 //
 // Visual style per Style.MD: dark cockpit panel (#2a2a32) on near-black
 // window, amber accent (#ffcc33), light-grey text, single 1 px borders.
-// One Pins tab is implemented; other tabs render a "coming in Slice 6+"
-// placeholder so the tab strip is visible.
-
-// --- Palette ------------------------------------------------------------
 //
-// Theme switch. `dark` toggles every colour token between the dark
-// cockpit palette and a light alternate. Rust side (settings.rs) loads
-// the persisted choice at startup and writes it back when the Help
-// menu's "Switch to … Mode" item is clicked.
-export global Palette {
-    in-out property <bool> dark: true;
-
-    out property <color> bg-window: dark ? #000000 : #e8e8ec;
-    out property <color> bg-panel: dark ? #2a2a32 : #f4f4f6;
-    out property <color> bg-cell: dark ? #1a1a1e : #ffffff;
-    out property <color> bg-cell-alt: dark ? #1e1e22 : #f8f8fa;
-    out property <color> bg-cell-hover: dark ? #1f1f23 : #ececf0;
-    out property <color> bg-pill: dark ? #1e1e22 : #ebebef;
-    out property <color> bg-pill-hover: dark ? #2e2e34 : #dcdce0;
-    out property <color> border: dark ? #3a3a44 : #c0c0c8;
-    out property <color> text: dark ? #c8c8d0 : #1a1a1e;
-    out property <color> text-dim: dark ? #8a8a96 : #5a5a64;
-    out property <color> accent: dark ? #ffcc33 : #cc8800;
-    out property <color> error: dark ? #d65a5a : #a02828;
-    out property <color> error-bg: dark ? #553333 : #f4caca;
-    out property <color> success: dark ? #6cb86c : #2a7a2a;
-    out property <color> bg-warn: dark ? #4a3a1a : #fbe9bf;
-}
-
-// --- Lucide icon wrapper ------------------------------------------------
+// --- UI rules -----------------------------------------------------------
 //
-// A Lucide SVG re-tinted with the palette accent / text colour. The
-// SVG ships with `stroke="#000"` so the femtovg-rasterised texture has
-// alpha-correct strokes; `colorize` then multiplies the texture by
-// `tint`. Default size 14 px matches the v0.1 toolbar's 13 px text.
-component LucideIcon inherits Image {
-    in property <length> size: 14px;
-    in property <color> tint: Palette.text;
-    width: root.size;
-    height: root.size;
-    colorize: root.tint;
-    image-fit: contain;
-    accessible-role: none;
-}
-
-// --- Reusable controls --------------------------------------------------
-component PillButton inherits Rectangle {
-    in property <string> label;
-    in property <bool> enabled: true;
-    in property <image> icon-source;
-    in property <bool> show-chevron: false;
-    callback clicked();
-
-    height: 30px;
-    min-width: 110px;
-    background: ta.has-hover ? Palette.bg-pill-hover : Palette.bg-pill;
-    border-color: Palette.border;
-    border-width: 1px;
-    border-radius: 4px;
-    opacity: root.enabled ? 1.0 : 0.4;
-
-    HorizontalLayout {
-        alignment: center;
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 6px;
-        LucideIcon {
-            source: root.icon-source;
-            tint: Palette.text;
-            visible: root.icon-source.width > 0;
-            y: (parent.height - self.height) / 2;
-        }
-        Text {
-            text: root.label;
-            color: Palette.text;
-            font-size: 13px;
-            vertical-alignment: center;
-        }
-        LucideIcon {
-            source: @image-url("../assets/icons/chevron-down.svg");
-            tint: Palette.text-dim;
-            size: 12px;
-            visible: root.show-chevron;
-            y: (parent.height - self.height) / 2;
-        }
-    }
-
-    ta := TouchArea {
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
-    }
-}
-
-component StatusDot inherits Rectangle {
-    in property <bool> connected: false;
-    width: 10px;
-    height: 10px;
-    border-radius: 5px;
-    background: root.connected ? Palette.success : Palette.text-dim;
-}
-
-// --- Tab strip ----------------------------------------------------------
-component TabButton inherits Rectangle {
-    in property <string> label;
-    in property <bool> selected: false;
-    in property <bool> enabled: true;
-    in property <image> icon-source;
-    callback clicked();
-
-    height: 36px;
-    min-width: 120px;
-    background: root.selected ? Palette.bg-panel : (ta.has-hover && root.enabled ? Palette.bg-cell-hover : Palette.bg-cell);
-    border-color: root.selected ? Palette.accent : Palette.border;
-    border-width: root.selected ? 2px : 1px;
-    opacity: root.enabled ? 1.0 : 0.4;
-
-    HorizontalLayout {
-        alignment: center;
-        padding-left: 14px;
-        padding-right: 14px;
-        spacing: 6px;
-        LucideIcon {
-            source: root.icon-source;
-            tint: root.selected ? Palette.accent : Palette.text;
-            size: 14px;
-            visible: root.icon-source.width > 0;
-            y: (parent.height - self.height) / 2;
-        }
-        Text {
-            text: root.label;
-            color: root.selected ? Palette.accent : Palette.text;
-            font-size: 13px;
-            vertical-alignment: center;
-        }
-    }
-
-    ta := TouchArea {
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
-    }
-}
-
-// --- One pin row --------------------------------------------------------
+// Row-cell sizing standard (applies to every in-row interactive control:
+// buttons, dropdown cells, checkboxes, number fields, jump icons, …):
 //
-// pin-name is the silkscreen label ("PA0"), function-label is the
-// human-readable role name, function-index is the index into the
-// global PinFunction list (used for the dropdown round-trip without
-// inventing a Slint enum mirror), conflict-msg is non-empty when the
-// validator flagged this row.
-struct PinRow {
-    pin-name: string,
-    function-label: string,
-    function-index: int,
-    /// Visual family code from `PinFunctionFamily::to_u8` — drives the
-    /// leading icon on the function cell. Values: 0=NotUsed, 1=Button,
-    /// 2=Axis, 3=Encoder, 4=Bus, 5=Sensor, 6=ShiftReg, 7=Led, 8=RgbLed.
-    function-family: int,
-    conflict-msg: string,
-    /// Short role abbreviation rendered on the board-view chip (e.g.
-    /// "Btn", "Axis", "Enc"). Empty for `NotUsed`.
-    family-short: string,
-}
-
-// Pick the Lucide SVG matching a `PinFunctionFamily` integer. Slint's
-// `@image-url` is a compile-time literal so the dispatch has to be a
-// chain — values match `PinFunctionFamily::to_u8` on the Rust side.
-component PinFamilyIcon inherits LucideIcon {
-    in property <int> family: 0;
-    size: 14px;
-    source:
-        family == 1 ? @image-url("../assets/icons/square-mouse-pointer.svg") :
-        family == 2 ? @image-url("../assets/icons/sliders-horizontal.svg") :
-        family == 3 ? @image-url("../assets/icons/rotate-cw.svg") :
-        family == 4 ? @image-url("../assets/icons/cable.svg") :
-        family == 5 ? @image-url("../assets/icons/radar.svg") :
-        family == 6 ? @image-url("../assets/icons/layers.svg") :
-        family == 7 ? @image-url("../assets/icons/lightbulb.svg") :
-        family == 8 ? @image-url("../assets/icons/palette.svg") :
-        @image-url("../assets/icons/circle-dashed.svg");
-}
-
-// One entry in an inline dropdown list. Used across every tab — the
-// Buttons-tab Type / Shift / LOGIC Op / LOGIC Debounce columns, the
-// Axes filter / resolution / channel cells, the Encoders mode cells,
-// the Shift Registers type cell, and the Pins Function cell.
+//   - Outer host is **26 px tall** — the row's nominal height.
+//   - Inner visual is **22 px tall** — leaves 2 px of breathing space
+//     top + bottom so adjacent rows don't kiss each other.
+//   - Inner sits at `y: (parent.height - self.height) / 2` so it
+//     y-centres inside the host regardless of the outer's actual
+//     height. Setting a fixed `y:` doesn't work for layout children —
+//     `HorizontalLayout` overrides any direct `y` on its items, so
+//     the outer's height has to *match the row*, and the inner does
+//     the centring.
 //
-// Header rows (`is-header: true`) render as non-clickable category
-// labels — only the grouped pickers (Type column, Pin Function) emit
-// them. Flat lists set `is-header: false` on every row.
+// Any future button/cell that appears alongside the existing ones MUST
+// follow this — otherwise the column won't line up.
 //
-// `blocked` greys the entry and shows `blocked-reason` inline (only
-// used by the Buttons-tab Type column today; other pickers leave
-// `blocked: false` on every entry).
-struct DropdownEntry {
-    is-header: bool,
-    label: string,
-    value: int,
-    blocked: bool,
-    blocked-reason: string,
-}
+// Tooltips: every button takes `in property <string> tooltip` and
+// publishes hover state to the `TooltipState` global. The AppWindow
+// hosts a single tooltip rectangle that renders the tooltip text at
+// the hovered button's absolute position.
 
-// Inline dropdown cell — chevron pill that opens an anchored
-// `PopupWindow` of [`DropdownEntry`] rows. Used by every Type / Shift /
-// Op / Debounce / Filter / Mode picker across the configurator (issue
-// #15). Replaces the old `CycleCell` step-cycle pattern *and* the
-// `TypePickerOverlay` modal so picking from a finite list is one click
-// to open + one click to apply, with the popup anchored under the cell.
+// --- Globals ------------------------------------------------------------
 //
-// Properties:
-//
-// - `entries` — list of rows in display order. Category-grouped
-//   pickers (Buttons Type column, Pins Function) emit `is-header: true`
-//   rows between groups; flat pickers leave it false on every entry.
-// - `current-value` — highlight the row whose `value` matches. Pass
-//   `-1` to suppress the highlight (e.g. when nothing is selected yet).
-// - `popup-width` / `popup-max-height` — popup geometry. Width
-//   defaults to the cell width; height caps at 320 px and scrolls past.
-// - `opening` callback — runs right before the popup shows. Use it to
-//   refresh the entries model with current context (the Buttons Type
-//   column populates blocked-info per the row's `physical_num`).
-// - `picked(int)` callback — emits the chosen entry's `value`.
-component DropdownCell inherits Rectangle {
-    in property <string> value-label;
-    in property <length> value-width: 100px;
-    in property <bool> compact: false;
-    in property <[DropdownEntry]> entries;
-    in property <int> current-value: -1;
-    in property <length> popup-width: 0px;
-    in property <length> popup-max-height: 320px;
-    callback opening();
-    callback picked(int /* value */);
-
-    height: 26px;
-
-    Rectangle {
-        width: root.value-width;
-        height: 22px;
-        background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
-        border-color: Palette.border;
-        border-width: 1px;
-        border-radius: 3px;
-        x: 0;
-        y: (parent.height - self.height) / 2;
-
-        HorizontalLayout {
-            padding-left: 8px;
-            padding-right: 6px;
-            spacing: 4px;
-            alignment: start;
-            Text {
-                text: root.value-label;
-                color: Palette.text;
-                font-size: 12px;
-                vertical-alignment: center;
-                overflow: elide;
-                horizontal-stretch: 1;
-            }
-            LucideIcon {
-                source: @image-url("../assets/icons/chevron-down.svg");
-                tint: Palette.text-dim;
-                size: 10px;
-                y: (parent.height - self.height) / 2;
-            }
-        }
-
-        ta := TouchArea {
-            clicked => {
-                root.opening();
-                popup.show();
-            }
-        }
-
-        popup := PopupWindow {
-            x: 0;
-            y: parent.height + 2px;
-            width: root.popup-width > 0px ? root.popup-width : root.value-width;
-            close-policy: close-on-click-outside;
-
-            Rectangle {
-                background: Palette.bg-panel;
-                border-color: Palette.border;
-                border-width: 1px;
-                border-radius: 4px;
-                // Cap at popup-max-height; entries past the cap scroll.
-                height: min(root.popup-max-height, root.entries.length * 22px + 12px);
-
-                Flickable {
-                    width: parent.width;
-                    height: parent.height;
-                    viewport-height: root.entries.length * 22px + 12px;
-
-                    VerticalLayout {
-                        padding: 4px;
-                        spacing: 1px;
-                        for entry[i] in root.entries: Rectangle {
-                            height: entry.is-header ? 18px : 22px;
-                            property <bool> is-current:
-                                !entry.is-header && entry.value == root.current-value;
-                            background: entry.is-header
-                                ? transparent
-                                : (entry-ta.has-hover && !entry.blocked
-                                    ? Palette.bg-cell-hover
-                                    : (is-current ? Palette.bg-cell-alt : transparent));
-                            border-color: is-current ? Palette.accent : transparent;
-                            border-width: is-current ? 1px : 0px;
-                            border-radius: 3px;
-
-                            HorizontalLayout {
-                                padding-left: entry.is-header ? 4px : 14px;
-                                padding-right: 6px;
-                                spacing: 4px;
-                                alignment: start;
-                                Text {
-                                    text: entry.label;
-                                    color: entry.is-header
-                                        ? Palette.text-dim
-                                        : (entry.blocked
-                                            ? Palette.text-dim
-                                            : (is-current ? Palette.accent : Palette.text));
-                                    font-size: entry.is-header ? 10px : 12px;
-                                    font-weight: entry.is-header ? 600 : 400;
-                                    letter-spacing: entry.is-header ? 0.5px : 0px;
-                                    vertical-alignment: center;
-                                }
-                                Rectangle { horizontal-stretch: 1; }
-                                if !entry.is-header && entry.blocked: Text {
-                                    text: entry.blocked-reason;
-                                    color: Palette.text-dim;
-                                    font-size: 10px;
-                                    vertical-alignment: center;
-                                }
-                            }
-
-                            entry-ta := TouchArea {
-                                enabled: !entry.is-header && !entry.blocked;
-                                clicked => {
-                                    root.picked(entry.value);
-                                    popup.close();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-component PinRowView inherits Rectangle {
-    in property <PinRow> entry;
-    in property <[DropdownEntry]> function-entries;
-    in property <int> slot;
-    in property <bool> selected: false;
-    callback function-picked(int /* slot */, int /* new function index */);
-    callback row-clicked();
-
-    height: 36px;
-    background: entry.conflict-msg != ""
-        ? Palette.error-bg
-        : (root.selected ? Palette.bg-warn : Palette.bg-cell);
-    border-color: entry.conflict-msg != ""
-        ? Palette.error
-        : (root.selected ? Palette.accent : Palette.border);
-    border-width: root.selected ? 2px : 1px;
-    border-radius: 4px;
-
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 12px;
-
-        Text {
-            text: root.entry.pin-name;
-            color: Palette.text;
-            font-size: 13px;
-            width: 60px;
-            vertical-alignment: center;
-        }
-
-        // Family icon + inline-dropdown function picker (issue #15).
-        HorizontalLayout {
-            spacing: 6px;
-            alignment: start;
-            PinFamilyIcon {
-                family: root.entry.function-family;
-                tint: root.entry.function-family == 0 ? Palette.text-dim : Palette.accent;
-                y: (parent.height - self.height) / 2;
-            }
-            DropdownCell {
-                compact: true;
-                value-label: root.entry.function-label;
-                value-width: 240px;
-                entries: root.function-entries;
-                current-value: root.entry.function-index;
-                popup-width: 280px;
-                popup-max-height: 360px;
-                picked(v) => { root.function-picked(root.slot, v); }
-            }
-        }
-
-        Rectangle {
-            // Conflict badge
-            visible: root.entry.conflict-msg != "";
-            height: 22px;
-            background: Palette.error;
-            border-radius: 3px;
-            HorizontalLayout {
-                padding-left: 6px;
-                padding-right: 8px;
-                spacing: 4px;
-                alignment: center;
-                LucideIcon {
-                    source: @image-url("../assets/icons/alert-octagon.svg");
-                    tint: #ffffff;
-                    size: 12px;
-                    y: (parent.height - self.height) / 2;
-                }
-                Text {
-                    text: root.entry.conflict-msg;
-                    color: #ffffff;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
-        Rectangle {
-            // Spacer to push the row leftward
-            horizontal-stretch: 1;
-        }
-    }
-}
-
-// --- Board-view pin chip -----------------------------------------------
-//
-// One pin chip on the schematic board view. Renders silkscreen label
-// + family icon + short role abbreviation. Clicking highlights the
-// pin's row in the list on the left.
-component PinChip inherits Rectangle {
-    in property <PinRow> entry;
-    in property <int> slot;
-    in property <bool> selected;
-    callback clicked();
-
-    height: 28px;
-    background: ta.has-hover
-        ? Palette.bg-cell-hover
-        : (root.selected ? Palette.bg-warn : Palette.bg-cell);
-    border-color: root.entry.conflict-msg != ""
-        ? Palette.error
-        : (root.selected ? Palette.accent : Palette.border);
-    border-width: root.selected || root.entry.conflict-msg != "" ? 2px : 1px;
-    border-radius: 3px;
-
-    HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        spacing: 4px;
-        Text {
-            text: root.entry.pin-name;
-            color: Palette.text;
-            font-size: 11px;
-            font-weight: 600;
-            width: 38px;
-            vertical-alignment: center;
-        }
-        PinFamilyIcon {
-            family: root.entry.function-family;
-            tint: root.entry.function-family == 0 ? Palette.text-dim : Palette.accent;
-            size: 12px;
-            y: (parent.height - self.height) / 2;
-        }
-        Text {
-            text: root.entry.family-short;
-            color: root.entry.function-family == 0 ? Palette.text-dim : Palette.text;
-            font-size: 10px;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-        }
-    }
-
-    ta := TouchArea {
-        clicked => { root.clicked(); }
-    }
-}
-
-// Schematic two-column board view. Each side mirrors the silkscreen
-// layout of a BluePill / BlackPill header strip — pins arranged in
-// two vertical columns, top to bottom, USB end at the top. The
-// 15-pin split (left: slots 0..14, right: slots 15..29) is close
-// enough to the BluePill's PA-side / PB-side layout to give the user
-// a "which side of the board" mental model without committing to
-// pixel-perfect artwork.
-component PinBoardView inherits Rectangle {
-    in property <[PinRow]> pins;
-    in property <int> highlighted-slot;
-    callback chip-clicked(int /* slot */);
-
-    background: Palette.bg-panel;
-
-    VerticalLayout {
-        padding: 8px;
-        spacing: 6px;
-        Text {
-            text: "Board view";
-            color: Palette.text;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        Text {
-            text: "Click a pin to highlight its row. Red border = pin conflict.";
-            color: Palette.text-dim;
-            font-size: 10px;
-            wrap: word-wrap;
-        }
-        Flickable {
-            viewport-height: 15 * 32px;
-            VerticalLayout {
-                spacing: 2px;
-                for r in 15: HorizontalLayout {
-                    spacing: 6px;
-                    if r < root.pins.length: PinChip {
-                        entry: root.pins[r];
-                        slot: r;
-                        selected: root.highlighted-slot == r;
-                        horizontal-stretch: 1;
-                        clicked => { root.chip-clicked(r); }
-                    }
-                    if r + 15 < root.pins.length: PinChip {
-                        entry: root.pins[r + 15];
-                        slot: r + 15;
-                        selected: root.highlighted-slot == r + 15;
-                        horizontal-stretch: 1;
-                        clicked => { root.chip-clicked(r + 15); }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// --- Pins tab body ------------------------------------------------------
-component PinsTab inherits Rectangle {
-    in property <[PinRow]> pins;
-    in property <[DropdownEntry]> function-entries;
-    in-out property <int> highlighted-slot: -1;
-    callback pin-changed(int /* slot */, int /* function index */);
-
-    background: Palette.bg-panel;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 6px;
-
-        Text {
-            text: "Pins";
-            color: Palette.accent;
-            font-size: 18px;
-            font-weight: 600;
-        }
-        Text {
-            text: "Left list maps each physical chip pin to a function — click the function cell to pick from a grouped dropdown. Right is a schematic board view: click a chip to highlight the matching row. Pins in conflict (singleton roles claimed twice) get a red outline.";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-
-        HorizontalLayout {
-            spacing: 10px;
-            vertical-stretch: 1;
-            // Left half: existing list.
-            Flickable {
-                horizontal-stretch: 5;
-                viewport-height: pins.length * 38px;
-                VerticalLayout {
-                    spacing: 2px;
-                    for pin-data[i] in root.pins: PinRowView {
-                        entry: pin-data;
-                        slot: i;
-                        function-entries: root.function-entries;
-                        selected: root.highlighted-slot == i;
-                        function-picked(slot, fn) => { root.pin-changed(slot, fn); }
-                        row-clicked => { root.highlighted-slot = i; }
-                    }
-                }
-            }
-            // Right half: schematic board view.
-            PinBoardView {
-                horizontal-stretch: 4;
-                pins: root.pins;
-                highlighted-slot: root.highlighted-slot;
-                chip-clicked(slot) => { root.highlighted-slot = slot; }
-            }
-        }
-    }
-}
-
-// --- Axes tab ----------------------------------------------------------
-//
-// One row per axis (8 axes). The form surfaces only the v0.1 controls
-// (Port.md §5 Slice 6): output / inverted / centered toggles,
-// calibration min/center/max, filter level, deadband, resolution,
-// channel. Sensor + axis-to-buttons stay raw in the codec for v0.1.
-struct AxisRow {
-    title: string,
-    out-enabled: bool,
-    inverted: bool,
-    is-centered: bool,
-    calib-min: int,
-    calib-center: int,
-    calib-max: int,
-    filter-index: int,
-    filter-label: string,
-    deadband-size: int,
-    is-dynamic-deadband: bool,
-    resolution: int,
-    channel: int,
-    live-raw: int,
-    live-out: int,
-}
-
-component CheckCell inherits Rectangle {
-    in property <string> label;
-    in property <bool> checked;
-    /// When set, hide the trailing label so the cell is a bare
-    /// check-square sized for a table column.
-    in property <bool> compact: false;
-    callback toggled();
-
-    height: 26px;
-    min-width: root.compact ? 26px : 70px;
-    background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
-    border-color: root.checked ? Palette.accent : Palette.border;
-    border-width: 1px;
-    border-radius: 3px;
-
-    HorizontalLayout {
-        padding-left: root.compact ? 0px : 8px;
-        padding-right: root.compact ? 0px : 8px;
-        spacing: 6px;
-        alignment: center;
-        Rectangle {
-            width: 12px;
-            height: 12px;
-            border-radius: 2px;
-            border-color: Palette.border;
-            border-width: 1px;
-            background: root.checked ? Palette.accent : transparent;
-            y: (parent.height - self.height) / 2;
-        }
-        if !root.compact: Text {
-            text: root.label;
-            color: Palette.text;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-    }
-
-    ta := TouchArea {
-        clicked => { root.toggled(); }
-    }
-}
-
-component NumberCell inherits Rectangle {
-    in property <string> label;
-    in property <int> value;
-    in property <length> field-width: 70px;
-    /// When set, suppress the leading label so the cell sits cleanly in a
-    /// column under a header row.
-    in property <bool> compact: false;
-    callback edited(int);
-
-    height: 26px;
-    min-width: root.compact ? root.field-width : 110px;
-
-    HorizontalLayout {
-        spacing: 4px;
-        alignment: start;
-
-        if !root.compact: Text {
-            text: root.label;
-            color: Palette.text-dim;
-            font-size: 11px;
-            vertical-alignment: center;
-        }
-
-        Rectangle {
-            width: root.field-width;
-            height: 22px;
-            background: Palette.bg-cell-alt;
-            border-color: ti.has-focus ? Palette.accent : Palette.border;
-            border-width: 1px;
-            border-radius: 3px;
-            y: (parent.height - self.height) / 2;
-
-            ti := TextInput {
-                text: root.value;
-                color: Palette.text;
-                font-size: 12px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                input-type: number;
-                width: parent.width - 8px;
-                x: 4px;
-                edited => {
-                    if (self.text == "" || self.text == "-") {
-                        return;
-                    }
-                    root.edited(self.text.to-float());
-                }
-                accepted => { self.clear-focus(); }
-            }
-        }
-    }
-}
-
-component AxisRowView inherits Rectangle {
-    in property <AxisRow> entry;
-    in property <int> slot;
-    in property <[DropdownEntry]> filter-entries;
-    in property <[DropdownEntry]> resolution-entries;
-    in property <[DropdownEntry]> channel-entries;
-    callback out-toggled(int);
-    callback inverted-toggled(int);
-    callback centered-toggled(int);
-    callback calib-min-edited(int, int);
-    callback calib-center-edited(int, int);
-    callback calib-max-edited(int, int);
-    callback filter-picked(int /* slot */, int /* value */);
-    callback deadband-edited(int, int);
-    callback dyn-deadband-toggled(int);
-    callback resolution-picked(int /* slot */, int /* value */);
-    callback channel-picked(int /* slot */, int /* value */);
-
-    height: 110px;
-    background: Palette.bg-cell;
-    border-color: Palette.border;
-    border-width: 1px;
-    border-radius: 4px;
-
-    VerticalLayout {
-        padding: 8px;
-        spacing: 6px;
-
-        HorizontalLayout {
-            spacing: 8px;
-            alignment: start;
-            Text {
-                text: root.entry.title;
-                color: Palette.accent;
-                font-size: 13px;
-                font-weight: 600;
-                vertical-alignment: center;
-                width: 70px;
-            }
-            CheckCell {
-                label: "Output";
-                checked: root.entry.out-enabled;
-                toggled => { root.out-toggled(root.slot); }
-            }
-            CheckCell {
-                label: "Inverted";
-                checked: root.entry.inverted;
-                toggled => { root.inverted-toggled(root.slot); }
-            }
-            CheckCell {
-                label: "Centered";
-                checked: root.entry.is-centered;
-                toggled => { root.centered-toggled(root.slot); }
-            }
-            Rectangle { horizontal-stretch: 1; }
-            Text {
-                text: "raw " + root.entry.live-raw + "    out " + root.entry.live-out;
-                color: Palette.text-dim;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-        }
-
-        HorizontalLayout {
-            spacing: 8px;
-            NumberCell {
-                label: "min";
-                value: root.entry.calib-min;
-                field-width: 60px;
-                edited(v) => { root.calib-min-edited(root.slot, v); }
-            }
-            NumberCell {
-                label: "ctr";
-                value: root.entry.calib-center;
-                field-width: 60px;
-                edited(v) => { root.calib-center-edited(root.slot, v); }
-            }
-            NumberCell {
-                label: "max";
-                value: root.entry.calib-max;
-                field-width: 60px;
-                edited(v) => { root.calib-max-edited(root.slot, v); }
-            }
-            HorizontalLayout {
-                spacing: 4px;
-                alignment: start;
-                Text {
-                    text: "filter";
-                    color: Palette.text-dim;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-                DropdownCell {
-                    compact: true;
-                    value-label: root.entry.filter-label;
-                    value-width: 76px;
-                    entries: root.filter-entries;
-                    current-value: root.entry.filter-index;
-                    popup-width: 120px;
-                    picked(v) => { root.filter-picked(root.slot, v); }
-                }
-            }
-            NumberCell {
-                label: "dead";
-                value: root.entry.deadband-size;
-                field-width: 48px;
-                edited(v) => { root.deadband-edited(root.slot, v); }
-            }
-            CheckCell {
-                label: "Dyn";
-                checked: root.entry.is-dynamic-deadband;
-                toggled => { root.dyn-deadband-toggled(root.slot); }
-            }
-            HorizontalLayout {
-                spacing: 4px;
-                alignment: start;
-                Text {
-                    text: "res";
-                    color: Palette.text-dim;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-                DropdownCell {
-                    compact: true;
-                    value-label: root.entry.resolution;
-                    value-width: 36px;
-                    entries: root.resolution-entries;
-                    current-value: root.entry.resolution;
-                    popup-width: 64px;
-                    picked(v) => { root.resolution-picked(root.slot, v); }
-                }
-            }
-            HorizontalLayout {
-                spacing: 4px;
-                alignment: start;
-                Text {
-                    text: "ch";
-                    color: Palette.text-dim;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-                DropdownCell {
-                    compact: true;
-                    value-label: root.entry.channel;
-                    value-width: 36px;
-                    entries: root.channel-entries;
-                    current-value: root.entry.channel;
-                    popup-width: 64px;
-                    picked(v) => { root.channel-picked(root.slot, v); }
-                }
-            }
-            Rectangle { horizontal-stretch: 1; }
-        }
-    }
-}
-
-component AxesTab inherits Rectangle {
-    in property <[AxisRow]> axes;
-    in property <[DropdownEntry]> filter-entries;
-    in property <[DropdownEntry]> resolution-entries;
-    in property <[DropdownEntry]> channel-entries;
-    callback out-toggled(int);
-    callback inverted-toggled(int);
-    callback centered-toggled(int);
-    callback calib-min-edited(int, int);
-    callback calib-center-edited(int, int);
-    callback calib-max-edited(int, int);
-    callback filter-picked(int /* slot */, int /* value */);
-    callback deadband-edited(int, int);
-    callback dyn-deadband-toggled(int);
-    callback resolution-picked(int /* slot */, int /* value */);
-    callback channel-picked(int /* slot */, int /* value */);
-
-    background: Palette.bg-panel;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 6px;
-
-        Text {
-            text: "Axes";
-            color: Palette.accent;
-            font-size: 18px;
-            font-weight: 600;
-        }
-        Text {
-            text: "Linear calibration, filter, deadband, resolution, channel. Live raw and processed values stream from the device.";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-
-        Flickable {
-            viewport-height: axes.length * 116px;
-            VerticalLayout {
-                spacing: 4px;
-                for axis-data[i] in root.axes: AxisRowView {
-                    entry: axis-data;
-                    slot: i;
-                    filter-entries: root.filter-entries;
-                    resolution-entries: root.resolution-entries;
-                    channel-entries: root.channel-entries;
-                    out-toggled(s) => { root.out-toggled(s); }
-                    inverted-toggled(s) => { root.inverted-toggled(s); }
-                    centered-toggled(s) => { root.centered-toggled(s); }
-                    calib-min-edited(s, v) => { root.calib-min-edited(s, v); }
-                    calib-center-edited(s, v) => { root.calib-center-edited(s, v); }
-                    calib-max-edited(s, v) => { root.calib-max-edited(s, v); }
-                    filter-picked(s, v) => { root.filter-picked(s, v); }
-                    deadband-edited(s, v) => { root.deadband-edited(s, v); }
-                    dyn-deadband-toggled(s) => { root.dyn-deadband-toggled(s); }
-                    resolution-picked(s, v) => { root.resolution-picked(s, v); }
-                    channel-picked(s, v) => { root.channel-picked(s, v); }
-                }
-            }
-        }
-    }
-}
-
-// --- Buttons tab -------------------------------------------------------
-//
-// 128 button slots. Each row carries:
-//
-//   slot # | physical input | type cycle | shift cycle | inverted | disabled | live
-//
-// LOGIC slots reveal a second row for op + source B + debounce timer
-// + validator badge. The per-physical coexistence rule
-// (F103_GESTURE_PLAN.md: only NORMAL/TAP/DOUBLE_TAP may share a
-// physical) is enforced by `physical_assignment_blocked` in
-// freejoyx-core::domain::buttons — if the user tries to step the
-// type cycle to a blocked variant, the cycle skips past it.
-struct ButtonRow {
-    // Wire slot index (0..127). The model can be filtered or reordered,
-    // so the for-loop position is no longer authoritative for callbacks.
-    slot: int,
-    physical-num: int,
-    type-label: string,
-    type-index: int,
-    is-logic: bool,
-    shift-modificator: int,
-    is-inverted: bool,
-    is-disabled: bool,
-    // LOGIC-only fields (ignored when is-logic == false)
-    src-b: int,
-    op-label: string,
-    op-index: int,
-    debounce-label: string,
-    debounce-index: int,
-    logic-error: string,
-    // Live state
-    phy-pressed: bool,
-    log-pressed: bool,
-}
-
-component LiveDot inherits Rectangle {
-    in property <bool> on;
-    in property <color> on-color: Palette.accent;
-    width: 10px;
-    height: 10px;
-    border-radius: 5px;
-    background: root.on ? root.on-color : Palette.bg-cell-alt;
-    border-color: Palette.border;
-    border-width: 1px;
-}
-
-// Column widths for the Buttons + Logic table. Header cells and row
-// cells both pull from these so the grid stays aligned regardless of
-// the value rendered inside.
-export global BtnCols {
-    out property <length> w-num: 32px;
-    out property <length> w-phy: 56px;
-    out property <length> w-type: 144px;
-    out property <length> w-shift: 36px;
-    out property <length> w-inv: 38px;
-    out property <length> w-dis: 38px;
-    out property <length> w-live: 30px;
-    out property <length> spacing: 8px;
-    // Logic sub-row columns. Offsets sit under the main row's Type
-    // column (so logic operands feel attached to the slot type).
-    out property <length> w-op: 96px;
-    out property <length> w-srcb: 52px;
-    out property <length> w-debounce: 76px;
-}
-
-component HeaderCell inherits Rectangle {
-    in property <string> text;
-    in property <length> col-width: 32px;
-    in property <TextHorizontalAlignment> hpad: TextHorizontalAlignment.left;
-    width: root.col-width;
-    Text {
-        text: root.text;
-        color: Palette.text-dim;
-        font-size: 10px;
-        letter-spacing: 0.4px;
-        horizontal-alignment: root.hpad;
-        vertical-alignment: center;
-        width: 100%;
-        height: 100%;
-    }
-}
-
-component ButtonRowView inherits Rectangle {
-    in property <ButtonRow> entry;
-    in property <int> slot;
-    in property <[DropdownEntry]> type-entries;
-    in property <[DropdownEntry]> shift-entries;
-    in property <[DropdownEntry]> op-entries;
-    in property <[DropdownEntry]> debounce-entries;
-    callback physical-edited(int /* slot */, int /* new value */);
-    callback type-opening(int /* slot */);
-    callback type-picked(int /* slot */, int /* value */);
-    callback shift-picked(int /* slot */, int /* value */);
-    callback inverted-toggled(int);
-    callback disabled-toggled(int);
-    callback src-b-edited(int, int);
-    callback op-picked(int /* slot */, int /* value */);
-    callback debounce-picked(int /* slot */, int /* value */);
-
-    height: root.entry.is-logic ? 70px : 36px;
-    background: Palette.bg-cell;
-    border-color: root.entry.logic-error != "" ? Palette.error : Palette.border;
-    border-width: 1px;
-    border-radius: 4px;
-
-    VerticalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 2px;
-
-        HorizontalLayout {
-            spacing: BtnCols.spacing;
-            alignment: start;
-            HeaderCell {
-                text: (root.slot + 1) + ".";
-                col-width: BtnCols.w-num;
-                hpad: TextHorizontalAlignment.right;
-            }
-            NumberCell {
-                compact: true;
-                value: root.entry.physical-num;
-                field-width: BtnCols.w-phy;
-                edited(v) => { root.physical-edited(root.slot, v); }
-            }
-            DropdownCell {
-                value-label: root.entry.type-label;
-                value-width: BtnCols.w-type;
-                entries: root.type-entries;
-                current-value: root.entry.type-index;
-                popup-width: 260px;
-                opening => { root.type-opening(root.slot); }
-                picked(v) => { root.type-picked(root.slot, v); }
-            }
-            DropdownCell {
-                compact: true;
-                value-label: root.entry.shift-modificator == 0
-                    ? "—" : root.entry.shift-modificator;
-                value-width: BtnCols.w-shift;
-                entries: root.shift-entries;
-                current-value: root.entry.shift-modificator;
-                popup-width: 96px;
-                picked(v) => { root.shift-picked(root.slot, v); }
-            }
-            CheckCell {
-                compact: true;
-                checked: root.entry.is-inverted;
-                toggled => { root.inverted-toggled(root.slot); }
-            }
-            CheckCell {
-                compact: true;
-                checked: root.entry.is-disabled;
-                toggled => { root.disabled-toggled(root.slot); }
-            }
-            Rectangle { horizontal-stretch: 1; }
-            HorizontalLayout {
-                spacing: 4px;
-                width: BtnCols.w-live;
-                alignment: center;
-                LiveDot {
-                    on: root.entry.phy-pressed;
-                    y: (parent.height - self.height) / 2;
-                }
-                LiveDot {
-                    on: root.entry.log-pressed;
-                    on-color: Palette.success;
-                    y: (parent.height - self.height) / 2;
-                }
-            }
-        }
-
-        if root.entry.is-logic: HorizontalLayout {
-            spacing: BtnCols.spacing;
-            alignment: start;
-            // Offset under the Type column.
-            Rectangle { width: BtnCols.w-num + BtnCols.spacing + BtnCols.w-phy; }
-            DropdownCell {
-                compact: true;
-                value-label: root.entry.op-label;
-                value-width: BtnCols.w-op;
-                entries: root.op-entries;
-                current-value: root.entry.op-index;
-                popup-width: 160px;
-                picked(v) => { root.op-picked(root.slot, v); }
-            }
-            NumberCell {
-                compact: true;
-                value: root.entry.src-b;
-                field-width: BtnCols.w-srcb;
-                edited(v) => { root.src-b-edited(root.slot, v); }
-            }
-            DropdownCell {
-                compact: true;
-                value-label: root.entry.debounce-label;
-                value-width: BtnCols.w-debounce;
-                entries: root.debounce-entries;
-                current-value: root.entry.debounce-index;
-                popup-width: 120px;
-                picked(v) => { root.debounce-picked(root.slot, v); }
-            }
-            Rectangle {
-                visible: root.entry.logic-error != "";
-                height: 22px;
-                background: Palette.error;
-                border-radius: 3px;
-                HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 8px;
-                    spacing: 4px;
-                    alignment: center;
-                    LucideIcon {
-                        source: @image-url("../assets/icons/alert-octagon.svg");
-                        tint: #ffffff;
-                        size: 12px;
-                        y: (parent.height - self.height) / 2;
-                    }
-                    Text {
-                        text: root.entry.logic-error;
-                        color: #ffffff;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-            Rectangle { horizontal-stretch: 1; }
-        }
-    }
-}
-
-// Column-header strip for the Buttons + Logic table. Sits above the
-// Flickable so it stays visible while the rows scroll.
-component ButtonsHeaderRow inherits Rectangle {
-    height: 24px;
-    background: Palette.bg-panel;
-    HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        spacing: BtnCols.spacing;
-        HeaderCell { text: "#"; col-width: BtnCols.w-num; hpad: TextHorizontalAlignment.right; }
-        HeaderCell { text: "PHYSICAL"; col-width: BtnCols.w-phy; }
-        HeaderCell { text: "TYPE"; col-width: BtnCols.w-type; }
-        HeaderCell { text: "SHIFT"; col-width: BtnCols.w-shift; hpad: TextHorizontalAlignment.center; }
-        HeaderCell { text: "INV"; col-width: BtnCols.w-inv; hpad: TextHorizontalAlignment.center; }
-        HeaderCell { text: "DIS"; col-width: BtnCols.w-dis; hpad: TextHorizontalAlignment.center; }
-        Rectangle { horizontal-stretch: 1; }
-        HeaderCell { text: "LIVE"; col-width: BtnCols.w-live; hpad: TextHorizontalAlignment.center; }
-    }
-    Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
-        background: Palette.border;
-    }
-}
-
-component ButtonsTab inherits Rectangle {
-    in property <[ButtonRow]> buttons;
-    // Dropdown entries (issue #15) — shared across all 128 rows.
-    in property <[DropdownEntry]> type-entries;
-    in property <[DropdownEntry]> shift-entries;
-    in property <[DropdownEntry]> op-entries;
-    in property <[DropdownEntry]> debounce-entries;
-    in property <[DropdownEntry]> filter-category-entries;
-    in property <int> filter-category-value;
-    // Filter state (issue #5) — passed from AppWindow so the Rust side
-    // can mutate freely and the strip below reflects the truth.
-    in property <bool> hide-unused;
-    in property <int> filter-physical;  // -1 when not filtering
-    in property <string> filter-category-label;  // "All" when not filtering
-    in property <int> visible-count;
-    callback physical-edited(int, int);
-    callback type-opening(int /* slot */);
-    callback type-picked(int /* slot */, int /* value */);
-    callback shift-picked(int /* slot */, int /* value */);
-    callback inverted-toggled(int);
-    callback disabled-toggled(int);
-    callback src-b-edited(int, int);
-    callback op-picked(int /* slot */, int /* value */);
-    callback debounce-picked(int /* slot */, int /* value */);
-    callback hide-unused-toggled();
-    callback filter-physical-edited(int);
-    callback filter-physical-cleared();
-    callback filter-category-picked(int /* value */);
-    callback add-button-clicked();
-
-    background: Palette.bg-panel;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 6px;
-
-        Text {
-            text: "Buttons";
-            color: Palette.accent;
-            font-size: 18px;
-            font-weight: 600;
-        }
-        Text {
-            text: "128 button slots. Click the Type cell to pick from category groups; blocked types are greyed with the conflicting slot's name. LOGIC rows expose op / Source B / debounce in a sub-row under the Type column. Amber dot = physical pressed; green dot = logical state.";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-
-        // Filter strip (issue #5).
-        Rectangle {
-            height: 32px;
-            background: Palette.bg-cell;
-            border-color: Palette.border;
-            border-width: 1px;
-            border-radius: 4px;
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                spacing: 10px;
-                alignment: start;
-                LucideIcon {
-                    source: @image-url("../assets/icons/filter.svg");
-                    tint: Palette.text-dim;
-                    size: 14px;
-                    y: (parent.height - self.height) / 2;
-                }
-                CheckCell {
-                    label: "Hide unused";
-                    checked: root.hide-unused;
-                    toggled => { root.hide-unused-toggled(); }
-                }
-                NumberCell {
-                    label: "Physical";
-                    value: root.filter-physical;
-                    field-width: 56px;
-                    edited(v) => { root.filter-physical-edited(v); }
-                }
-                if root.filter-physical >= 0: Rectangle {
-                    width: 22px;
-                    height: 22px;
-                    y: (parent.height - self.height) / 2;
-                    background: clr-ta.has-hover ? Palette.bg-cell-hover : transparent;
-                    border-radius: 3px;
-                    LucideIcon {
-                        source: @image-url("../assets/icons/x.svg");
-                        tint: Palette.text-dim;
-                        size: 12px;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                    }
-                    clr-ta := TouchArea {
-                        clicked => { root.filter-physical-cleared(); }
-                    }
-                }
-                HorizontalLayout {
-                    spacing: 4px;
-                    alignment: start;
-                    Text {
-                        text: "Type";
-                        color: Palette.text-dim;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                    DropdownCell {
-                        compact: true;
-                        value-label: root.filter-category-label;
-                        value-width: 116px;
-                        entries: root.filter-category-entries;
-                        current-value: root.filter-category-value;
-                        popup-width: 160px;
-                        picked(v) => { root.filter-category-picked(v); }
-                    }
-                }
-                Rectangle { horizontal-stretch: 1; }
-                Text {
-                    text: root.visible-count + " / 128";
-                    color: Palette.text-dim;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-                PillButton {
-                    label: "Add button";
-                    icon-source: @image-url("../assets/icons/plus.svg");
-                    clicked => { root.add-button-clicked(); }
-                }
-            }
-        }
-
-        ButtonsHeaderRow { }
-
-        Flickable {
-            // 38 px for a plain row, 72 px when the LOGIC sub-row is visible.
-            // Pre-compute a conservative bound rather than a per-row sum:
-            // 128 × 72 = 9216 px will always cover, regardless of LOGIC mix.
-            viewport-height: buttons.length * 72px;
-            VerticalLayout {
-                spacing: 2px;
-                for btn-data[i] in root.buttons: ButtonRowView {
-                    entry: btn-data;
-                    slot: btn-data.slot;
-                    type-entries: root.type-entries;
-                    shift-entries: root.shift-entries;
-                    op-entries: root.op-entries;
-                    debounce-entries: root.debounce-entries;
-                    physical-edited(s, v) => { root.physical-edited(s, v); }
-                    type-opening(s) => { root.type-opening(s); }
-                    type-picked(s, v) => { root.type-picked(s, v); }
-                    shift-picked(s, v) => { root.shift-picked(s, v); }
-                    inverted-toggled(s) => { root.inverted-toggled(s); }
-                    disabled-toggled(s) => { root.disabled-toggled(s); }
-                    src-b-edited(s, v) => { root.src-b-edited(s, v); }
-                    op-picked(s, v) => { root.op-picked(s, v); }
-                    debounce-picked(s, v) => { root.debounce-picked(s, v); }
-                }
-            }
-        }
-    }
-}
-
-// --- Shifts & Timers tab -----------------------------------------------
-struct ShiftSlot {
-    label: string,
-    button-index: int,
-}
-
-struct TimerField {
-    label: string,
-    hint: string,
-    value-ms: int,
-}
-
-component ShiftsTimersTab inherits Rectangle {
-    in property <[ShiftSlot]> shifts;
-    in property <[TimerField]> timers;
-    callback shift-edited(int /* slot */, int /* button index */);
-    callback timer-edited(int /* index */, int /* ms */);
-
-    background: Palette.bg-panel;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 10px;
-
-        Text {
-            text: "Shifts";
-            color: Palette.accent;
-            font-size: 18px;
-            font-weight: 600;
-        }
-        Text {
-            text: "Shifts pick the button index that activates each modifier slot (−1 = unused). Timers configure debounce / tap windows; values are in milliseconds.";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-
-        Text {
-            text: "Shift modifier slots";
-            color: Palette.text;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        for shift-data[i] in root.shifts: Rectangle {
-            height: 30px;
-            HorizontalLayout {
-                spacing: 8px;
-                Text {
-                    text: shift-data.label;
-                    color: Palette.text;
-                    font-size: 12px;
-                    width: 80px;
-                    vertical-alignment: center;
-                }
-                NumberCell {
-                    label: "button";
-                    value: shift-data.button-index;
-                    field-width: 64px;
-                    edited(v) => { root.shift-edited(i, v); }
-                }
-                Rectangle { horizontal-stretch: 1; }
-            }
-        }
-
-        Rectangle { height: 8px; }
-        Text {
-            text: "Global timers (ms)";
-            color: Palette.text;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        for timer-data[i] in root.timers: Rectangle {
-            height: 30px;
-            HorizontalLayout {
-                spacing: 8px;
-                Text {
-                    text: timer-data.label;
-                    color: Palette.text;
-                    font-size: 12px;
-                    width: 130px;
-                    vertical-alignment: center;
-                }
-                NumberCell {
-                    label: "ms";
-                    value: timer-data.value-ms;
-                    field-width: 72px;
-                    edited(v) => { root.timer-edited(i, v); }
-                }
-                Text {
-                    text: timer-data.hint;
-                    color: Palette.text-dim;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-                Rectangle { horizontal-stretch: 1; }
-            }
-        }
-
-        Rectangle { vertical-stretch: 1; }
-    }
-}
-
-// --- Encoders tab ------------------------------------------------------
-//
-// 16 soft encoder slots (each: mode 1x/2x/4x) plus 2 fast encoder
-// slots (enabled flag + mode). Fast encoder pins are silicon-locked on
-// F103 (PA8/PA9 = Fast 1, PB6/PB7 = Fast 2) so they're configured by
-// setting the FastEncoder PinFunction on those pins via the Pins tab,
-// not here.
-struct EncoderRow {
-    label: string,
-    mode-label: string,
-    mode-index: int,
-}
-
-struct FastEncoderRow {
-    label: string,
-    enabled: bool,
-    mode-label: string,
-    mode-index: int,
-    hint: string,
-}
-
-component EncodersTab inherits Rectangle {
-    in property <[EncoderRow]> soft;
-    in property <[FastEncoderRow]> fast;
-    in property <[DropdownEntry]> mode-entries;
-    callback soft-mode-picked(int /* slot */, int /* value */);
-    callback fast-enabled-toggled(int);
-    callback fast-mode-picked(int /* slot */, int /* value */);
-
-    background: Palette.bg-panel;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 8px;
-
-        Text {
-            text: "Encoders";
-            color: Palette.accent;
-            font-size: 18px;
-            font-weight: 600;
-        }
-        Text {
-            text: "Soft encoders wire two button slots (type ENCODER_INPUT_A / B) to a software quadrature decoder. Fast encoders use the F103's hardware timers — pins are silicon-locked (PA8/PA9 = Fast 1, PB6/PB7 = Fast 2) and assigned via the Pins tab.";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-
-        Text {
-            text: "Fast (hardware) encoders";
-            color: Palette.text;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        for fast-data[i] in root.fast: Rectangle {
-            height: 32px;
-            background: Palette.bg-cell;
-            border-color: Palette.border;
-            border-width: 1px;
-            border-radius: 4px;
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                spacing: 8px;
-                Text {
-                    text: fast-data.label;
-                    color: Palette.text;
-                    font-size: 12px;
-                    width: 80px;
-                    vertical-alignment: center;
-                }
-                CheckCell {
-                    label: "Enabled";
-                    checked: fast-data.enabled;
-                    toggled => { root.fast-enabled-toggled(i); }
-                }
-                HorizontalLayout {
-                    spacing: 4px;
-                    alignment: start;
-                    Text {
-                        text: "mode";
-                        color: Palette.text-dim;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                    DropdownCell {
-                        compact: true;
-                        value-label: fast-data.mode-label;
-                        value-width: 50px;
-                        entries: root.mode-entries;
-                        current-value: fast-data.mode-index;
-                        popup-width: 80px;
-                        picked(v) => { root.fast-mode-picked(i, v); }
-                    }
-                }
-                Text {
-                    text: fast-data.hint;
-                    color: Palette.text-dim;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
-                Rectangle { horizontal-stretch: 1; }
-            }
-        }
-
-        Rectangle { height: 8px; }
-        Text {
-            text: "Soft (software) encoders";
-            color: Palette.text;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        Flickable {
-            viewport-height: soft.length * 30px;
-            VerticalLayout {
-                spacing: 2px;
-                for soft-data[i] in root.soft: Rectangle {
-                    height: 28px;
-                    background: Palette.bg-cell;
-                    border-color: Palette.border;
-                    border-width: 1px;
-                    border-radius: 3px;
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        spacing: 8px;
-                        Text {
-                            text: soft-data.label;
-                            color: Palette.text;
-                            font-size: 12px;
-                            width: 80px;
-                            vertical-alignment: center;
-                        }
-                        HorizontalLayout {
-                            spacing: 4px;
-                            alignment: start;
-                            Text {
-                                text: "mode";
-                                color: Palette.text-dim;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                            }
-                            DropdownCell {
-                                compact: true;
-                                value-label: soft-data.mode-label;
-                                value-width: 50px;
-                                entries: root.mode-entries;
-                                current-value: soft-data.mode-index;
-                                popup-width: 80px;
-                                picked(v) => { root.soft-mode-picked(i, v); }
-                            }
-                        }
-                        Rectangle { horizontal-stretch: 1; }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// --- Shift Registers tab ----------------------------------------------
-struct ShiftRegRow {
-    label: string,
-    type-label: string,
-    type-index: int,
-    button-count: int,
-}
-
-component ShiftRegsTab inherits Rectangle {
-    in property <[ShiftRegRow]> registers;
-    in property <[DropdownEntry]> type-entries;
-    callback type-picked(int /* slot */, int /* value */);
-    callback count-edited(int, int);
-
-    background: Palette.bg-panel;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 8px;
-
-        Text {
-            text: "Shift Registers";
-            color: Palette.accent;
-            font-size: 18px;
-            font-weight: 600;
-        }
-        Text {
-            text: "Up to four daisy-chained HC165 or CD4021 shift registers. Latch / data / clock pins are assigned via the Pins tab (ShiftRegLatch / ShiftRegData / ShiftRegClk).";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-
-        for reg-data[i] in root.registers: Rectangle {
-            height: 36px;
-            background: Palette.bg-cell;
-            border-color: Palette.border;
-            border-width: 1px;
-            border-radius: 4px;
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                spacing: 8px;
-                Text {
-                    text: reg-data.label;
-                    color: Palette.text;
-                    font-size: 12px;
-                    width: 60px;
-                    vertical-alignment: center;
-                }
-                HorizontalLayout {
-                    spacing: 4px;
-                    alignment: start;
-                    Text {
-                        text: "type";
-                        color: Palette.text-dim;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                    DropdownCell {
-                        compact: true;
-                        value-label: reg-data.type-label;
-                        value-width: 140px;
-                        entries: root.type-entries;
-                        current-value: reg-data.type-index;
-                        popup-width: 200px;
-                        picked(v) => { root.type-picked(i, v); }
-                    }
-                }
-                NumberCell {
-                    label: "buttons";
-                    value: reg-data.button-count;
-                    field-width: 56px;
-                    edited(v) => { root.count-edited(i, v); }
-                }
-                Rectangle { horizontal-stretch: 1; }
-            }
-        }
-
-        Rectangle { vertical-stretch: 1; }
-    }
-}
-
-// --- Advanced Settings tab --------------------------------------------
-//
-// Device-name (up to 26 bytes), VID, PID. Firmware version and board
-// id are rendered read-only — they come straight off the wire. The
-// device picker is in the toolbar; this tab is for fields that are
-// persisted on the connected board.
-struct AdvancedModel {
-    device-name: string,
-    vid-hex: string,
-    pid-hex: string,
-    firmware-version-hex: string,
-    board-id: int,
-    freejoyx-version: string,
-}
-
-component AdvancedTab inherits Rectangle {
-    in property <AdvancedModel> data;
-    callback name-edited(string);
-    callback vid-edited(string);
-    callback pid-edited(string);
-
-    background: Palette.bg-panel;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 10px;
-
-        Text {
-            text: "Advanced Settings";
-            color: Palette.accent;
-            font-size: 18px;
-            font-weight: 600;
-        }
-        Text {
-            text: "Device identification persisted on the board. VID and PID accept hex (e.g. 0483). Firmware version and board id are read-only.";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-
-        // Device name
-        HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: "Device name";
-                color: Palette.text;
-                font-size: 12px;
-                width: 130px;
-                vertical-alignment: center;
-            }
-            Rectangle {
-                width: 280px;
-                height: 26px;
-                background: Palette.bg-cell-alt;
-                border-color: name-ti.has-focus ? Palette.accent : Palette.border;
-                border-width: 1px;
-                border-radius: 3px;
-                name-ti := TextInput {
-                    text: root.data.device-name;
-                    color: Palette.text;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    width: parent.width - 12px;
-                    x: 6px;
-                    edited => { root.name-edited(self.text); }
-                    accepted => { self.clear-focus(); }
-                }
-            }
-            Text {
-                text: "max 26 bytes";
-                color: Palette.text-dim;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-        }
-
-        // VID
-        HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: "USB VID";
-                color: Palette.text;
-                font-size: 12px;
-                width: 130px;
-                vertical-alignment: center;
-            }
-            Rectangle {
-                width: 100px;
-                height: 26px;
-                background: Palette.bg-cell-alt;
-                border-color: vid-ti.has-focus ? Palette.accent : Palette.border;
-                border-width: 1px;
-                border-radius: 3px;
-                vid-ti := TextInput {
-                    text: root.data.vid-hex;
-                    color: Palette.text;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    horizontal-alignment: center;
-                    width: parent.width - 12px;
-                    x: 6px;
-                    edited => { root.vid-edited(self.text); }
-                    accepted => { self.clear-focus(); }
-                }
-            }
-            Text {
-                text: "hex (0..ffff)";
-                color: Palette.text-dim;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-        }
-
-        // PID
-        HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: "USB PID";
-                color: Palette.text;
-                font-size: 12px;
-                width: 130px;
-                vertical-alignment: center;
-            }
-            Rectangle {
-                width: 100px;
-                height: 26px;
-                background: Palette.bg-cell-alt;
-                border-color: pid-ti.has-focus ? Palette.accent : Palette.border;
-                border-width: 1px;
-                border-radius: 3px;
-                pid-ti := TextInput {
-                    text: root.data.pid-hex;
-                    color: Palette.text;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    horizontal-alignment: center;
-                    width: parent.width - 12px;
-                    x: 6px;
-                    edited => { root.pid-edited(self.text); }
-                    accepted => { self.clear-focus(); }
-                }
-            }
-            Text {
-                text: "hex (0..ffff)";
-                color: Palette.text-dim;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-        }
-
-        Rectangle { height: 8px; }
-        Text {
-            text: "Read-only";
-            color: Palette.text;
-            font-size: 13px;
-            font-weight: 600;
-        }
-
-        HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: "Firmware version";
-                color: Palette.text-dim;
-                font-size: 12px;
-                width: 130px;
-                vertical-alignment: center;
-            }
-            Text {
-                text: root.data.firmware-version-hex;
-                color: Palette.text;
-                font-size: 12px;
-                vertical-alignment: center;
-            }
-        }
-        HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: "Board id";
-                color: Palette.text-dim;
-                font-size: 12px;
-                width: 130px;
-                vertical-alignment: center;
-            }
-            Text {
-                text: root.data.board-id;
-                color: Palette.text;
-                font-size: 12px;
-                vertical-alignment: center;
-            }
-        }
-        HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: "FreeJoyX build";
-                color: Palette.text-dim;
-                font-size: 12px;
-                width: 130px;
-                vertical-alignment: center;
-            }
-            Text {
-                text: root.data.freejoyx-version;
-                color: Palette.text;
-                font-size: 12px;
-                vertical-alignment: center;
-            }
-        }
-
-        Rectangle { vertical-stretch: 1; }
-    }
-}
-
-// --- Device picker (toolbar popup row) ---------------------------------
-struct DeviceOption {
-    label: string,
-    serial: string,
-    is-current: bool,
-}
-
-component DevicePickerRow inherits Rectangle {
-    in property <DeviceOption> entry;
-    callback picked();
-
-    height: 30px;
-    background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell;
-    border-color: root.entry.is-current ? Palette.accent : Palette.border;
-    border-width: 1px;
-    border-radius: 3px;
-
-    HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
-        spacing: 6px;
-        Rectangle {
-            width: 8px;
-            height: 8px;
-            border-radius: 4px;
-            background: root.entry.is-current ? Palette.accent : transparent;
-            border-color: Palette.border;
-            border-width: 1px;
-            y: (parent.height - self.height) / 2;
-        }
-        Text {
-            text: root.entry.label;
-            color: Palette.text;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-        Rectangle { horizontal-stretch: 1; }
-    }
-
-    ta := TouchArea {
-        clicked => { root.picked(); }
-    }
-}
-
-// --- Toast banner -------------------------------------------------------
-//
-// Persistent message strip rendered between the toolbar and the tab
-// row when `severity > 0`. Used for unrecoverable / user-actionable
-// conditions that the auto-rotating status-text line at the bottom of
-// the toolbar can't carry — most importantly the unsupported-firmware
-// gate. Dismissible by the X on the right; an `error` toast survives
-// until the underlying condition clears, then the app clears it on the
-// caller's behalf.
-component ToastBanner inherits Rectangle {
-    in property <int> severity; // 1=info, 2=warn, 3=error
-    in property <string> message;
-    callback dismissed();
-
-    height: 36px;
-    background:
-        root.severity == 3 ? Palette.error-bg
-        : root.severity == 2 ? Palette.bg-warn
-        : Palette.bg-cell;
-    border-color:
-        root.severity == 3 ? Palette.error
-        : root.severity == 2 ? Palette.accent
-        : Palette.border;
-    border-width: 1px;
-    border-radius: 4px;
-
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 8px;
-        spacing: 10px;
-        LucideIcon {
-            source:
-                root.severity == 3 ? @image-url("../assets/icons/circle-alert.svg")
-                : root.severity == 2 ? @image-url("../assets/icons/triangle-alert.svg")
-                : @image-url("../assets/icons/info.svg");
-            tint:
-                root.severity == 3 ? Palette.error
-                : root.severity == 2 ? Palette.accent
-                : Palette.text-dim;
-            size: 16px;
-            y: (parent.height - self.height) / 2;
-        }
-        Text {
-            text: root.message;
-            color: Palette.text;
-            font-size: 12px;
-            vertical-alignment: center;
-            wrap: word-wrap;
-            horizontal-stretch: 1;
-        }
-        Rectangle {
-            width: 24px;
-            height: 24px;
-            y: (parent.height - self.height) / 2;
-            background: dismiss-ta.has-hover ? Palette.bg-cell-hover : transparent;
-            border-radius: 3px;
-            LucideIcon {
-                source: @image-url("../assets/icons/x.svg");
-                tint: Palette.text-dim;
-                size: 12px;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-            }
-            dismiss-ta := TouchArea {
-                clicked => { root.dismissed(); }
-            }
-        }
-    }
-}
-
-// --- About dialog -------------------------------------------------------
-component AboutDialog inherits Rectangle {
-    in property <string> app-version;
-    in property <string> build-rev;
-    in property <string> supported-fw;
-    callback closed();
-
-    background: Palette.bg-panel;
-    border-color: Palette.border;
-    border-width: 1px;
-    border-radius: 8px;
-    width: 480px;
-    height: 320px;
-
-    VerticalLayout {
-        padding: 20px;
-        spacing: 8px;
-        Text {
-            text: "FreeJoyXConfigurator";
-            color: Palette.accent;
-            font-size: 18px;
-            font-weight: 700;
-        }
-        Text {
-            text: "Version " + root.app-version + " (" + root.build-rev + ")";
-            color: Palette.text;
-            font-size: 12px;
-        }
-        Rectangle { height: 8px; }
-        Text {
-            text: "Native Rust + Slint configurator for FreeJoyX firmware.";
-            color: Palette.text;
-            font-size: 12px;
-            wrap: word-wrap;
-        }
-        Text {
-            text: "Supports firmware mask group 0x" + root.supported-fw + ". For legacy upstream FreeJoy boards on the 0x17XX line, use the Qt configurator (FreeJoyConfiguratorQt).";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-        Rectangle { height: 8px; }
-        Text {
-            text: "Licensed GPLv3. Source: github.com/anpeaco/FreeJoyXConfigurator";
-            color: Palette.text-dim;
-            font-size: 11px;
-            wrap: word-wrap;
-        }
-        Rectangle { vertical-stretch: 1; }
-        HorizontalLayout {
-            alignment: end;
-            PillButton {
-                label: "Close";
-                clicked => { root.closed(); }
-            }
-        }
-    }
-}
-
-// --- Top toolbar --------------------------------------------------------
-component Toolbar inherits Rectangle {
-    in property <string> status-text;
-    in property <bool> connected;
-    in property <string> device-summary;
-    in property <bool> can-read;
-    in property <bool> can-write;
-    in property <bool> can-save;
-    in property <[DeviceOption]> candidates;
-    callback read-clicked();
-    callback write-clicked();
-    callback save-clicked();
-    callback load-clicked();
-    callback refresh-devices();
-    callback device-picked(string /* serial */);
-    callback about-clicked();
-    callback open-log-folder();
-    callback theme-toggled();
-
-    background: Palette.bg-panel;
-    border-color: Palette.border;
-    border-width: 1px;
-    border-radius: 6px;
-    height: 56px;
-
-    HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        spacing: 12px;
-        StatusDot {
-            connected: root.connected;
-            y: (parent.height - self.height) / 2;
-        }
-        LucideIcon {
-            source: @image-url("../assets/icons/usb.svg");
-            tint: root.connected ? Palette.success : Palette.text-dim;
-            size: 16px;
-            y: (parent.height - self.height) / 2;
-        }
-        VerticalLayout {
-            alignment: center;
-            Text {
-                text: root.status-text;
-                color: Palette.text;
-                font-size: 12px;
-            }
-            Text {
-                text: root.device-summary;
-                color: Palette.text-dim;
-                font-size: 11px;
-            }
-        }
-        PillButton {
-            label: "Devices";
-            icon-source: @image-url("../assets/icons/cpu.svg");
-            show-chevron: true;
-            enabled: true;
-            clicked => {
-                root.refresh-devices();
-                picker-popup.show();
-            }
-            picker-popup := PopupWindow {
-                x: 0;
-                y: parent.height + 4px;
-                width: 320px;
-                close-policy: close-on-click-outside;
-                Rectangle {
-                    background: Palette.bg-panel;
-                    border-color: Palette.border;
-                    border-width: 1px;
-                    border-radius: 6px;
-                    VerticalLayout {
-                        padding: 8px;
-                        spacing: 4px;
-                        Text {
-                            text: "Connected HID candidates";
-                            color: Palette.text-dim;
-                            font-size: 11px;
-                        }
-                        if root.candidates.length == 0: Text {
-                            text: "No FreeJoy / FreeJoyX devices found.";
-                            color: Palette.text-dim;
-                            font-size: 11px;
-                        }
-                        for opt in root.candidates: DevicePickerRow {
-                            entry: opt;
-                            picked => {
-                                root.device-picked(opt.serial);
-                                picker-popup.close();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Rectangle { horizontal-stretch: 1; }
-        PillButton {
-            label: "Load File…";
-            icon-source: @image-url("../assets/icons/folder-open.svg");
-            enabled: true;
-            clicked => { root.load-clicked(); }
-        }
-        PillButton {
-            label: "Save File…";
-            icon-source: @image-url("../assets/icons/save.svg");
-            enabled: root.can-save;
-            clicked => { root.save-clicked(); }
-        }
-        PillButton {
-            label: "Read Device";
-            icon-source: @image-url("../assets/icons/download.svg");
-            enabled: root.can-read;
-            clicked => { root.read-clicked(); }
-        }
-        PillButton {
-            label: "Write Device";
-            icon-source: @image-url("../assets/icons/upload.svg");
-            enabled: root.can-write;
-            clicked => { root.write-clicked(); }
-        }
-        PillButton {
-            label: "Help";
-            icon-source: @image-url("../assets/icons/help-circle.svg");
-            show-chevron: true;
-            enabled: true;
-            clicked => {
-                help-popup.show();
-            }
-            help-popup := PopupWindow {
-                x: 0;
-                y: parent.height + 4px;
-                width: 200px;
-                close-policy: close-on-click-outside;
-                Rectangle {
-                    background: Palette.bg-panel;
-                    border-color: Palette.border;
-                    border-width: 1px;
-                    border-radius: 6px;
-                    VerticalLayout {
-                        padding: 6px;
-                        spacing: 4px;
-                        Rectangle {
-                            height: 28px;
-                            background: about-ta.has-hover ? Palette.bg-cell-hover : transparent;
-                            border-radius: 3px;
-                            HorizontalLayout {
-                                padding-left: 8px;
-                                padding-right: 8px;
-                                spacing: 8px;
-                                LucideIcon {
-                                    source: @image-url("../assets/icons/help-circle.svg");
-                                    tint: Palette.text-dim;
-                                    size: 14px;
-                                    y: (parent.height - self.height) / 2;
-                                }
-                                Text {
-                                    text: "About FreeJoyXConfigurator";
-                                    color: Palette.text;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
-                                }
-                            }
-                            about-ta := TouchArea {
-                                clicked => {
-                                    root.about-clicked();
-                                    help-popup.close();
-                                }
-                            }
-                        }
-                        Rectangle {
-                            height: 28px;
-                            background: log-ta.has-hover ? Palette.bg-cell-hover : transparent;
-                            border-radius: 3px;
-                            HorizontalLayout {
-                                padding-left: 8px;
-                                padding-right: 8px;
-                                spacing: 8px;
-                                LucideIcon {
-                                    source: @image-url("../assets/icons/folder.svg");
-                                    tint: Palette.text-dim;
-                                    size: 14px;
-                                    y: (parent.height - self.height) / 2;
-                                }
-                                Text {
-                                    text: "Open Log Folder";
-                                    color: Palette.text;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
-                                }
-                            }
-                            log-ta := TouchArea {
-                                clicked => {
-                                    root.open-log-folder();
-                                    help-popup.close();
-                                }
-                            }
-                        }
-                        Rectangle {
-                            height: 28px;
-                            background: theme-ta.has-hover ? Palette.bg-cell-hover : transparent;
-                            border-radius: 3px;
-                            HorizontalLayout {
-                                padding-left: 8px;
-                                padding-right: 8px;
-                                spacing: 8px;
-                                LucideIcon {
-                                    source: Palette.dark
-                                        ? @image-url("../assets/icons/sun.svg")
-                                        : @image-url("../assets/icons/moon.svg");
-                                    tint: Palette.text-dim;
-                                    size: 14px;
-                                    y: (parent.height - self.height) / 2;
-                                }
-                                Text {
-                                    text: Palette.dark ? "Switch to Light Mode" : "Switch to Dark Mode";
-                                    color: Palette.text;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
-                                }
-                            }
-                            theme-ta := TouchArea {
-                                clicked => {
-                                    root.theme-toggled();
-                                    help-popup.close();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+// Re-exported so the Rust side can access them via `Palette::get(window)`
+// etc. Slint only emits Rust bindings for globals visible at the entry
+// file's export surface.
+import { Palette } from "globals/palette.slint";
+import { TooltipState } from "globals/tooltip.slint";
+import { Icons } from "globals/icons.slint";
+export { Palette, TooltipState }
+
+// --- Shared structs ----------------------------------------------------
+import {
+    AdvancedModel, AxisRow, ButtonRow, CategoryChip, DeviceOption,
+    DropdownEntry, EncoderRow, FastEncoderRow, LogEntry, PinRow,
+    ShiftRegRow, ShiftSlot, TimerField,
+} from "types.slint";
+
+// --- Tab strip + overlays ----------------------------------------------
+import { TabButton } from "cells/tab_button.slint";
+import { DropdownOverlay } from "cells/dropdown_overlay.slint";
+
+// --- Tabs --------------------------------------------------------------
+import { PinsTab } from "tabs/pins_tab.slint";
+import { AxesTab } from "tabs/axes_tab.slint";
+import { ButtonsTab } from "tabs/buttons_tab.slint";
+import { ShiftsTimersTab } from "tabs/shifts_timers_tab.slint";
+import { EncodersTab } from "tabs/encoders_tab.slint";
+import { ShiftRegsTab } from "tabs/shift_regs_tab.slint";
+import { AdvancedTab } from "tabs/advanced_tab.slint";
+import { DebugTab } from "tabs/debug_tab.slint";
+
+// --- Toolbar + dialogs -------------------------------------------------
+import { Toolbar } from "dialogs/toolbar.slint";
+import { ToastBanner } from "dialogs/toast_banner.slint";
+import { AboutDialog } from "dialogs/about_dialog.slint";
 
 // --- Main window --------------------------------------------------------
 export component AppWindow inherits Window {
@@ -2331,23 +82,50 @@ export component AppWindow inherits Window {
     in property <bool> can-read: false;
     in property <bool> can-write: false;
     in property <bool> can-save: false;
+    // Identity-card fields surfaced on the new two-row toolbar. Rust
+    // populates these from `DeviceCandidate` + `DeviceConfig`; the
+    // Toolbar component renders them as the persistent device readout.
+    in property <string> device-name: "—";
+    in property <string> device-board: "—";
+    in property <string> device-fw: "";
+    in property <string> device-vid: "—";
+    in property <string> device-pid: "—";
+    in property <string> device-serial: "—";
+    in property <int> pins-assigned: 0;
     in property <[PinRow]> pins: [];
-    // Inline-dropdown entries (issue #15). Built once on the Rust side
-    // and pushed at startup. `button-type-entries` blocked flags
-    // refresh per-slot when a Type cell opens; the rest are static.
-    in property <[DropdownEntry]> pin-function-entries: [];
-    in property <[DropdownEntry]> button-type-entries: [];
-    in property <[DropdownEntry]> button-shift-entries: [];
-    in property <[DropdownEntry]> button-op-entries: [];
-    in property <[DropdownEntry]> button-debounce-entries: [];
-    in property <[DropdownEntry]> buttons-filter-category-entries: [];
-    in property <int> buttons-filter-category-value: -1;
-    in property <[DropdownEntry]> axis-filter-entries: [];
-    in property <[DropdownEntry]> axis-resolution-entries: [];
-    in property <[DropdownEntry]> axis-channel-entries: [];
-    in property <[DropdownEntry]> encoder-mode-entries: [];
-    in property <[DropdownEntry]> shift-reg-type-entries: [];
+    // Single global dropdown overlay (issue #15). Rust populates
+    // these properties + sets `dropdown-open` when a cell requests the
+    // overlay via `dropdown-requested`. The kind→entries dispatch
+    // happens on the Rust side; Slint only sees the resolved entries
+    // model and anchor coords.
+    in property <[DropdownEntry]> dropdown-entries: [];
+    in property <int> dropdown-current-value: -1;
+    in property <length> dropdown-anchor-x: 0px;
+    in property <length> dropdown-anchor-y: 0px;
+    in property <length> dropdown-anchor-w: 100px;
+    in property <bool> dropdown-open: false;
     in property <[AxisRow]> axes: [];
+    // Rust pushes the computed sum of per-row heights (collapsed vs
+    // expanded) so the Flickable's scrollable region matches the
+    // actually-rendered content height.
+    in property <length> axes-viewport-height: 1408px;
+    // Pin-jump targets. -1 = no flash. Set on `pin-jump-clicked`,
+    // cleared by a Rust-side timer ~1.5 s later. Per-target tab
+    // bindings live below; the AppWindow holds the auth source so
+    // tab-switch is atomic with the property push.
+    in-out property <int> flash-axis-slot: -1;
+    in-out property <int> flash-shift-reg-slot: -1;
+    in-out property <int> flash-pin-slot: -1;
+    /// Encoder→Buttons jump flash. Two slots (A and B of the encoder pair).
+    /// -1 = no flash. Cleared together with the other flash slots by the
+    /// pin-jump-flash timer in Rust.
+    in-out property <int> flash-button-slot-a: -1;
+    in-out property <int> flash-button-slot-b: -1;
+    // Scroll target inside the Axes tab. Set together with
+    // `axes-jump-tick` to drive the Flickable's viewport-y. Shift Regs
+    // doesn't need a scroll target — only 4 rows, all visible at once.
+    in-out property <length> axes-jump-y: 0px;
+    in-out property <int> axes-jump-tick: 0;
     in property <[ButtonRow]> buttons: [];
     in property <[ShiftSlot]> shifts: [];
     in property <[TimerField]> timers: [];
@@ -2356,6 +134,14 @@ export component AppWindow inherits Window {
     in property <[ShiftRegRow]> shift-registers: [];
     in property <[DeviceOption]> device-candidates: [];
     in property <AdvancedModel> advanced;
+    // --- Debug tab plumbing ---------------------------------------
+    in property <[LogEntry]> log-entries: [];
+    in property <int> log-verbosity-index: 2;       // Info default
+    in property <string> log-verbosity-label: "INFO";
+    in property <[CategoryChip]> log-categories: [];
+    in property <bool> log-auto-scroll: true;
+    in property <bool> log-verbose-config: false;
+    in property <int> log-total-count: 0;
 
     in property <int> toast-severity: 0; // 0 hidden, 1 info, 2 warn, 3 error
     in property <string> toast-message: "";
@@ -2370,49 +156,101 @@ export component AppWindow inherits Window {
     in property <int> buttons-filter-physical: -1;
     in property <string> buttons-filter-category-label: "All";
     in property <int> buttons-visible-count: 128;
+    /// True while the buttons-tab "press to filter" mode is armed.
+    /// Each observed press re-narrows `buttons-filter-physical` and
+    /// scrolls the row into view; the arm stays on until the user
+    /// toggles it off, switches tab, or clicks a per-row Physical cell.
+    in property <bool> buttons-filter-arm: false;
+    /// Buttons-tab scroll target driven by press-to-filter captures.
+    /// Together with `buttons-jump-tick`, mirrors the axes-tab jump
+    /// pattern.
+    in property <length> buttons-jump-y: 0px;
+    in property <int> buttons-jump-tick: 0;
 
     callback read-clicked();
     callback write-clicked();
     callback save-clicked();
     callback load-clicked();
-    callback pin-changed(int, int);
     callback axis-out-toggled(int);
     callback axis-inverted-toggled(int);
     callback axis-centered-toggled(int);
     callback axis-calib-min-edited(int, int);
     callback axis-calib-center-edited(int, int);
     callback axis-calib-max-edited(int, int);
-    callback axis-filter-picked(int /* slot */, int /* value */);
     callback axis-deadband-edited(int, int);
     callback axis-dyn-deadband-toggled(int);
-    callback axis-resolution-picked(int /* slot */, int /* value */);
-    callback axis-channel-picked(int /* slot */, int /* value */);
+    callback axis-calibrate-toggled(int);
+    callback axis-reset-clicked(int);
+    callback axis-set-center-clicked(int);
+    callback axis-detect-toggled(int);
+    /// Phase 1 advanced axes: extended-panel toggle and the three
+    /// new numeric edits in the Function group.
+    callback axis-extended-toggled(int);
+    callback axis-offset-edited(int, int);
+    callback axis-step-div-edited(int, int);
+    callback axis-prescaler-edited(int, int);
+    /// Phase 2 advanced axes: axis-triggered buttons + buttons-from-axes count.
+    callback axis-buttons-from-axes-edited(int, int);
+    callback axis-btn1-slot-edited(int, int);
+    callback axis-btn2-slot-edited(int, int);
+    callback axis-btn3-slot-edited(int, int);
+    /// Pins-tab "→" jump button. The argument is the wire-slot of the
+    /// source pin; Rust resolves it to (tab, row) and sets the
+    /// matching `flash-*-slot` + scroll target.
+    callback pin-jump-clicked(int /* wire-slot */);
+    /// Reverse jumps. Argument is the row's own slot index in its
+    /// home tab — Rust resolves it to the matching pin wire-slot
+    /// and sets `flash-pin-slot` + active-tab=0 (Pins).
+    callback axis-back-to-pin-clicked(int /* axis slot */);
+    callback shift-reg-back-to-pin-clicked(int /* sr slot */);
     callback button-physical-edited(int, int);
-    /// Emitted right before a Buttons-tab Type cell shows its popup so
-    /// the Rust side can refresh per-slot blocked flags in
-    /// `button-type-entries` (issue #15).
-    callback button-type-opening(int /* slot */);
-    callback button-type-picked(int /* slot */, int /* value */);
-    callback button-shift-picked(int /* slot */, int /* value */);
+    callback button-physical-armed-changed(int /* slot */, bool /* armed */);
     callback buttons-hide-unused-toggled();
     callback buttons-filter-physical-edited(int);
     callback buttons-filter-physical-cleared();
-    callback buttons-filter-category-picked(int /* value */);
+    /// Toggle the buttons-tab "press to filter" arm. When on, every
+    /// physical button press observed by `ParamsTick` re-narrows
+    /// `buttons-filter-physical` and scrolls the matching row into
+    /// view; the arm stays on across presses.
+    callback buttons-filter-arm-toggled();
+    /// Unconditional disarm — fired on tab switch and when the user
+    /// arms a per-row Physical cell. Rust mirrors the cleared state
+    /// back into `buttons-filter-arm`.
+    callback buttons-filter-disarm();
     callback buttons-add-clicked();
     callback button-inverted-toggled(int);
     callback button-disabled-toggled(int);
     callback button-src-b-edited(int, int);
-    callback button-op-picked(int /* slot */, int /* value */);
-    callback button-debounce-picked(int /* slot */, int /* value */);
+    callback button-src-b-armed-changed(int /* slot */, bool /* armed */);
     callback shift-edited(int, int);
     callback timer-edited(int, int);
-    callback soft-encoder-mode-picked(int /* slot */, int /* value */);
     callback fast-encoder-enabled-toggled(int);
-    callback fast-encoder-mode-picked(int /* slot */, int /* value */);
-    callback shift-reg-type-picked(int /* slot */, int /* value */);
+    callback encoder-swap-pair-clicked(int);
+    /// Soft-encoder "→ buttons" jump. Argument is the encoder's wire-slot
+    /// index. Rust resolves it to the paired A/B button slots and pulses
+    /// them on the Buttons tab.
+    callback encoder-jump-to-buttons-clicked(int /* wire-slot */);
     callback shift-reg-count-edited(int, int);
+    callback shift-reg-chip-size-edited(int /* sr slot */, int /* buttons per chip */);
+    callback shift-reg-chip-count-edited(int /* sr slot */, int /* chip count */);
+    /// Single dropdown open path (issue #15). `kind` identifies the
+    /// picker, `slot` the row inside it (or -1 for non-row pickers).
+    /// `abs-x` / `abs-y` are the cell's screen coordinates relative to
+    /// AppWindow; `width` is the resolved popup width. Rust dispatches
+    /// per `kind` to set entries + current-value, then sets
+    /// `dropdown-open: true`.
+    callback dropdown-requested(int /* kind */, int /* slot */, length /* abs-x */, length /* abs-y */, length /* width */);
+    /// Single dropdown pick path. Rust uses the last `dropdown-requested`'s
+    /// `kind` + `slot` to dispatch the picked value.
+    callback dropdown-picked(int /* value */);
+    callback dropdown-dismissed();
     callback refresh-devices();
     callback device-picked(string);
+    callback log-category-toggled(int /* category index */);
+    callback log-clear-clicked();
+    callback log-export-clicked();
+    callback log-auto-scroll-toggled();
+    callback log-verbose-config-toggled();
     callback advanced-name-edited(string);
     callback advanced-vid-edited(string);
     callback advanced-pid-edited(string);
@@ -2422,18 +260,51 @@ export component AppWindow inherits Window {
 
     in-out property <int> active-tab: 0;
 
+    // Per-tab "configured" indicators. Rust recomputes these on every
+    // `DeviceConfig` change (read, file load, dropdown pick, gesture
+    // capture mutation) and pushes the bool here. Drives the dot on
+    // the right edge of each `TabButton`. Tabs without a meaningful
+    // "has content" question (Advanced, Debug) don't get a property.
+    in property <bool> pins-has-content: false;
+    in property <bool> axes-has-content: false;
+    in property <bool> buttons-has-content: false;
+    in property <bool> shifts-has-content: false;
+    in property <bool> encoders-has-content: false;
+    in property <bool> shift-regs-has-content: false;
+
+    // Clear any stuck tooltip when the active tab changes. Jump
+    // buttons swap tabs out from under the hovered button — its
+    // TouchArea is destroyed before `has-hover` flips to false, so
+    // the per-button `changed hovered =>` clear never fires. Same
+    // story when the user clicks the tab strip directly while hovering
+    // a control. Resetting `TooltipState` here covers every path.
+    changed active-tab => {
+        TooltipState.visible = false;
+        TooltipState.text = "";
+        // Buttons-tab press-to-filter only makes sense while that tab
+        // is visible; tear it down on any tab change.
+        if (root.buttons-filter-arm) {
+            root.buttons-filter-disarm();
+        }
+    }
+
     VerticalLayout {
         padding: 14px;
         spacing: 10px;
 
         Toolbar {
-            status-text: root.status-text;
             connected: root.connected;
-            device-summary: root.device-summary;
             can-read: root.can-read;
             can-write: root.can-write;
             can-save: root.can-save;
             candidates: root.device-candidates;
+            device-name: root.device-name;
+            device-board: root.device-board;
+            device-fw: root.device-fw;
+            device-vid: root.device-vid;
+            device-pid: root.device-pid;
+            device-serial: root.device-serial;
+            pins-assigned: root.pins-assigned;
             read-clicked => { root.read-clicked(); }
             write-clicked => { root.write-clicked(); }
             save-clicked => { root.save-clicked(); }
@@ -2458,51 +329,69 @@ export component AppWindow inherits Window {
                 spacing: 4px;
                 TabButton {
                     label: "Pins";
-                    icon-source: @image-url("../assets/icons/pin.svg");
+                    icon-source: Icons.pins;
                     selected: root.active-tab == 0;
+                    has-content: root.pins-has-content;
                     clicked => { root.active-tab = 0; }
                 }
                 TabButton {
                     label: "Axes";
-                    icon-source: @image-url("../assets/icons/sliders-horizontal.svg");
+                    icon-source: Icons.axes;
                     selected: root.active-tab == 1;
+                    has-content: root.axes-has-content;
                     clicked => { root.active-tab = 1; }
                 }
                 TabButton {
                     label: "Buttons";
-                    icon-source: @image-url("../assets/icons/square-mouse-pointer.svg");
+                    icon-source: Icons.buttons;
                     selected: root.active-tab == 2;
+                    has-content: root.buttons-has-content;
                     clicked => { root.active-tab = 2; }
                 }
                 TabButton {
                     label: "Shifts";
-                    icon-source: @image-url("../assets/icons/timer.svg");
+                    icon-source: Icons.shifts-timers;
                     selected: root.active-tab == 3;
+                    has-content: root.shifts-has-content;
                     clicked => { root.active-tab = 3; }
                 }
                 TabButton {
                     label: "Encoders";
-                    icon-source: @image-url("../assets/icons/rotate-cw.svg");
+                    icon-source: Icons.encoders;
                     selected: root.active-tab == 4;
+                    has-content: root.encoders-has-content;
                     clicked => { root.active-tab = 4; }
                 }
                 TabButton {
                     label: "Shift Registers";
-                    icon-source: @image-url("../assets/icons/layers.svg");
+                    icon-source: Icons.shift-registers;
                     selected: root.active-tab == 5;
+                    has-content: root.shift-regs-has-content;
                     clicked => { root.active-tab = 5; }
                 }
                 TabButton {
                     label: "Advanced";
-                    icon-source: @image-url("../assets/icons/settings.svg");
+                    icon-source: Icons.advanced;
                     selected: root.active-tab == 6;
                     clicked => { root.active-tab = 6; }
+                }
+                TabButton {
+                    label: "Debug";
+                    icon-source: Icons.debug;
+                    selected: root.active-tab == 7;
+                    clicked => { root.active-tab = 7; }
                 }
                 Rectangle { horizontal-stretch: 1; }
             }
         }
 
-        // Tab body
+        // Tab body. Heavy tabs (Pins / Axes / Buttons) are instantiated
+        // once at startup and toggled via `visible:` so switching to
+        // them is a property flip instead of a teardown + rebuild of
+        // ~1000 Slint elements (the Buttons tab alone has 128 rows × ~10
+        // child cells). Lighter tabs stay on the `if` pattern so they
+        // only allocate when first opened. Side benefit: the alive tabs
+        // remember their scroll position across switches.
         Rectangle {
             vertical-stretch: 1;
             background: Palette.bg-panel;
@@ -2510,80 +399,139 @@ export component AppWindow inherits Window {
             border-width: 1px;
             border-radius: 6px;
 
-            if root.active-tab == 0: PinsTab {
+            PinsTab {
+                visible: root.active-tab == 0;
+                width: parent.width;
+                height: parent.height;
                 pins: root.pins;
-                function-entries: root.pin-function-entries;
-                pin-changed(slot, fn) => { root.pin-changed(slot, fn); }
+                flash-slot: root.flash-pin-slot;
+                dropdown-requested(k, s, x, y, w) => {
+                    root.dropdown-requested(k, s, x, y, w);
+                }
+                jump-clicked(s) => { root.pin-jump-clicked(s); }
             }
-            if root.active-tab == 1: AxesTab {
+            AxesTab {
+                visible: root.active-tab == 1;
+                width: parent.width;
+                height: parent.height;
                 axes: root.axes;
-                filter-entries: root.axis-filter-entries;
-                resolution-entries: root.axis-resolution-entries;
-                channel-entries: root.axis-channel-entries;
+                viewport-height: root.axes-viewport-height;
+                flash-slot: root.flash-axis-slot;
+                jump-y: root.axes-jump-y;
+                jump-tick: root.axes-jump-tick;
                 out-toggled(s) => { root.axis-out-toggled(s); }
                 inverted-toggled(s) => { root.axis-inverted-toggled(s); }
                 centered-toggled(s) => { root.axis-centered-toggled(s); }
                 calib-min-edited(s, v) => { root.axis-calib-min-edited(s, v); }
                 calib-center-edited(s, v) => { root.axis-calib-center-edited(s, v); }
                 calib-max-edited(s, v) => { root.axis-calib-max-edited(s, v); }
-                filter-picked(s, v) => { root.axis-filter-picked(s, v); }
                 deadband-edited(s, v) => { root.axis-deadband-edited(s, v); }
                 dyn-deadband-toggled(s) => { root.axis-dyn-deadband-toggled(s); }
-                resolution-picked(s, v) => { root.axis-resolution-picked(s, v); }
-                channel-picked(s, v) => { root.axis-channel-picked(s, v); }
+                calibrate-toggled(s) => { root.axis-calibrate-toggled(s); }
+                reset-clicked(s) => { root.axis-reset-clicked(s); }
+                set-center-clicked(s) => { root.axis-set-center-clicked(s); }
+                detect-toggled(s) => { root.axis-detect-toggled(s); }
+                back-to-pin-clicked(s) => { root.axis-back-to-pin-clicked(s); }
+                extended-toggled(s) => { root.axis-extended-toggled(s); }
+                offset-edited(s, v) => { root.axis-offset-edited(s, v); }
+                step-div-edited(s, v) => { root.axis-step-div-edited(s, v); }
+                prescaler-edited(s, v) => { root.axis-prescaler-edited(s, v); }
+                buttons-from-axes-edited(s, v) => { root.axis-buttons-from-axes-edited(s, v); }
+                btn1-slot-edited(s, v) => { root.axis-btn1-slot-edited(s, v); }
+                btn2-slot-edited(s, v) => { root.axis-btn2-slot-edited(s, v); }
+                btn3-slot-edited(s, v) => { root.axis-btn3-slot-edited(s, v); }
+                dropdown-requested(k, s, x, y, w) => {
+                    root.dropdown-requested(k, s, x, y, w);
+                }
             }
-            if root.active-tab == 2: ButtonsTab {
+            ButtonsTab {
+                visible: root.active-tab == 2;
+                width: parent.width;
+                height: parent.height;
                 buttons: root.buttons;
-                type-entries: root.button-type-entries;
-                shift-entries: root.button-shift-entries;
-                op-entries: root.button-op-entries;
-                debounce-entries: root.button-debounce-entries;
-                filter-category-entries: root.buttons-filter-category-entries;
-                filter-category-value: root.buttons-filter-category-value;
                 hide-unused: root.buttons-hide-unused;
                 filter-physical: root.buttons-filter-physical;
                 filter-category-label: root.buttons-filter-category-label;
                 visible-count: root.buttons-visible-count;
+                filter-arm: root.buttons-filter-arm;
+                jump-y: root.buttons-jump-y;
+                jump-tick: root.buttons-jump-tick;
+                flash-slot-a: root.flash-button-slot-a;
+                flash-slot-b: root.flash-button-slot-b;
                 physical-edited(s, v) => { root.button-physical-edited(s, v); }
-                type-opening(s) => { root.button-type-opening(s); }
-                type-picked(s, v) => { root.button-type-picked(s, v); }
-                shift-picked(s, v) => { root.button-shift-picked(s, v); }
+                physical-armed-changed(s, a) => { root.button-physical-armed-changed(s, a); }
                 inverted-toggled(s) => { root.button-inverted-toggled(s); }
                 disabled-toggled(s) => { root.button-disabled-toggled(s); }
                 src-b-edited(s, v) => { root.button-src-b-edited(s, v); }
-                op-picked(s, v) => { root.button-op-picked(s, v); }
-                debounce-picked(s, v) => { root.button-debounce-picked(s, v); }
+                src-b-armed-changed(s, a) => { root.button-src-b-armed-changed(s, a); }
                 hide-unused-toggled => { root.buttons-hide-unused-toggled(); }
                 filter-physical-edited(v) => { root.buttons-filter-physical-edited(v); }
                 filter-physical-cleared => { root.buttons-filter-physical-cleared(); }
-                filter-category-picked(v) => { root.buttons-filter-category-picked(v); }
+                filter-arm-toggled => { root.buttons-filter-arm-toggled(); }
+                dropdown-requested(k, s, x, y, w) => {
+                    root.dropdown-requested(k, s, x, y, w);
+                }
                 add-button-clicked => { root.buttons-add-clicked(); }
             }
             if root.active-tab == 3: ShiftsTimersTab {
+                width: parent.width;
+                height: parent.height;
                 shifts: root.shifts;
                 timers: root.timers;
                 shift-edited(i, v) => { root.shift-edited(i, v); }
                 timer-edited(i, v) => { root.timer-edited(i, v); }
             }
             if root.active-tab == 4: EncodersTab {
+                width: parent.width;
+                height: parent.height;
                 soft: root.soft-encoders;
                 fast: root.fast-encoders;
-                mode-entries: root.encoder-mode-entries;
-                soft-mode-picked(i, v) => { root.soft-encoder-mode-picked(i, v); }
                 fast-enabled-toggled(i) => { root.fast-encoder-enabled-toggled(i); }
-                fast-mode-picked(i, v) => { root.fast-encoder-mode-picked(i, v); }
+                dropdown-requested(k, s, x, y, w) => {
+                    root.dropdown-requested(k, s, x, y, w);
+                }
+                swap-pair-clicked(s) => { root.encoder-swap-pair-clicked(s); }
+                jump-to-buttons-clicked(s) => { root.encoder-jump-to-buttons-clicked(s); }
             }
             if root.active-tab == 5: ShiftRegsTab {
+                width: parent.width;
+                height: parent.height;
                 registers: root.shift-registers;
-                type-entries: root.shift-reg-type-entries;
-                type-picked(i, v) => { root.shift-reg-type-picked(i, v); }
+                flash-slot: root.flash-shift-reg-slot;
                 count-edited(i, v) => { root.shift-reg-count-edited(i, v); }
+                chip-size-edited(i, v) => { root.shift-reg-chip-size-edited(i, v); }
+                chip-count-edited(i, v) => { root.shift-reg-chip-count-edited(i, v); }
+                dropdown-requested(k, s, x, y, w) => {
+                    root.dropdown-requested(k, s, x, y, w);
+                }
+                back-to-pin-clicked(s) => { root.shift-reg-back-to-pin-clicked(s); }
             }
             if root.active-tab == 6: AdvancedTab {
+                width: parent.width;
+                height: parent.height;
                 data: root.advanced;
                 name-edited(s) => { root.advanced-name-edited(s); }
                 vid-edited(s) => { root.advanced-vid-edited(s); }
                 pid-edited(s) => { root.advanced-pid-edited(s); }
+            }
+            if root.active-tab == 7: DebugTab {
+                width: parent.width;
+                height: parent.height;
+                entries: root.log-entries;
+                verbosity-index: root.log-verbosity-index;
+                verbosity-label: root.log-verbosity-label;
+                categories: root.log-categories;
+                auto-scroll: root.log-auto-scroll;
+                verbose-config: root.log-verbose-config;
+                total-count: root.log-total-count;
+                verbosity-clicked(k, s, x, y, w) => {
+                    root.dropdown-requested(k, s, x, y, w);
+                }
+                category-toggled(i) => { root.log-category-toggled(i); }
+                clear-clicked => { root.log-clear-clicked(); }
+                export-clicked => { root.log-export-clicked(); }
+                auto-scroll-toggled => { root.log-auto-scroll-toggled(); }
+                verbose-config-toggled => { root.log-verbose-config-toggled(); }
             }
         }
     }
@@ -2598,6 +546,45 @@ export component AppWindow inherits Window {
             build-rev: root.build-rev;
             supported-fw: root.supported-fw;
             closed => { root.about-open = false; }
+        }
+    }
+
+    // Single global dropdown overlay (issue #15). Rendered above
+    // everything else so it floats over tabs / Flickable rows. Anchor
+    // coords are AppWindow-local — cells supply them via their own
+    // `absolute-position`.
+    if root.dropdown-open: DropdownOverlay {
+        anchor-x: root.dropdown-anchor-x;
+        anchor-y: root.dropdown-anchor-y;
+        anchor-w: root.dropdown-anchor-w;
+        entries: root.dropdown-entries;
+        current-value: root.dropdown-current-value;
+        picked(v) => { root.dropdown-picked(v); }
+        dismissed => { root.dropdown-dismissed(); }
+    }
+
+    // Tooltip overlay. Rendered last so it floats above every tab,
+    // toolbar, Flickable, and the dropdown overlay. The pill text is
+    // populated by hovering any control with a `tooltip` property
+    // (see `TooltipState` in globals/tooltip.slint). Pointer events
+    // pass through so hovering does not steal click focus from
+    // underlying buttons / dropdowns.
+    if TooltipState.visible && TooltipState.text != "": Rectangle {
+        x: TooltipState.anchor-x;
+        y: TooltipState.anchor-y;
+        width: tt-text.preferred-width + 14px;
+        height: tt-text.preferred-height + 8px;
+        background: Palette.bg-cell;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 3px;
+        z: 100;
+        tt-text := Text {
+            text: TooltipState.text;
+            color: Palette.text;
+            font-size: 11px;
+            x: 7px;
+            y: 4px;
         }
     }
 }

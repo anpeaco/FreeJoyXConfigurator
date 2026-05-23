@@ -1,0 +1,12 @@
+import { Palette } from "../globals/palette.slint";
+
+export component LiveDot inherits Rectangle {
+    in property <bool> on;
+    in property <color> on-color: Palette.accent;
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    background: root.on ? root.on-color : Palette.bg-cell-alt;
+    border-color: Palette.border;
+    border-width: 1px;
+}

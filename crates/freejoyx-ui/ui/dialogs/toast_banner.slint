@@ -1,0 +1,71 @@
+import { Palette } from "../globals/palette.slint";
+import { Icons } from "../globals/icons.slint";
+import { LucideIcon } from "../cells/lucide_icon.slint";
+
+// Persistent message strip rendered between the toolbar and the tab
+// row when `severity > 0`. Used for unrecoverable / user-actionable
+// conditions that the auto-rotating status-text line at the bottom of
+// the toolbar can't carry — most importantly the unsupported-firmware
+// gate. Dismissible by the X on the right; an `error` toast survives
+// until the underlying condition clears, then the app clears it on the
+// caller's behalf.
+export component ToastBanner inherits Rectangle {
+    in property <int> severity; // 1=info, 2=warn, 3=error
+    in property <string> message;
+    callback dismissed();
+
+    height: 36px;
+    background:
+        root.severity == 3 ? Palette.error-bg
+        : root.severity == 2 ? Palette.bg-warn
+        : Palette.bg-cell;
+    border-color:
+        root.severity == 3 ? Palette.error
+        : root.severity == 2 ? Palette.accent
+        : Palette.border;
+    border-width: 1px;
+    border-radius: 4px;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 10px;
+        LucideIcon {
+            source:
+                root.severity == 3 ? Icons.alert
+                : root.severity == 2 ? Icons.warning
+                : Icons.info;
+            tint:
+                root.severity == 3 ? Palette.error
+                : root.severity == 2 ? Palette.accent
+                : Palette.text-dim;
+            size: 16px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.message;
+            color: Palette.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 24px;
+            height: 24px;
+            y: (parent.height - self.height) / 2;
+            background: dismiss-ta.has-hover ? Palette.bg-cell-hover : transparent;
+            border-radius: 3px;
+            LucideIcon {
+                source: Icons.close;
+                tint: Palette.text-dim;
+                size: 12px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            dismiss-ta := TouchArea {
+                clicked => { root.dismissed(); }
+            }
+        }
+    }
+}

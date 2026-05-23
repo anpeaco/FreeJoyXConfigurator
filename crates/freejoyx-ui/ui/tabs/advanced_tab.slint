@@ -1,0 +1,202 @@
+import { Palette } from "../globals/palette.slint";
+import { AdvancedModel } from "../types.slint";
+
+// Device-name (up to 26 bytes), VID, PID. Firmware version and board
+// id are rendered read-only — they come straight off the wire. The
+// device picker is in the toolbar; this tab is for fields that are
+// persisted on the connected board.
+export component AdvancedTab inherits Rectangle {
+    in property <AdvancedModel> data;
+    callback name-edited(string);
+    callback vid-edited(string);
+    callback pid-edited(string);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        Text {
+            text: "Advanced Settings";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Device identification persisted on the board. VID and PID accept hex (e.g. 0483). Firmware version and board id are read-only.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        // Device name
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "Device name";
+                color: Palette.text;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: 280px;
+                height: 26px;
+                background: Palette.bg-cell-alt;
+                border-color: name-ti.has-focus ? Palette.accent : Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                name-ti := TextInput {
+                    text: root.data.device-name;
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    width: parent.width - 12px;
+                    x: 6px;
+                    edited => { root.name-edited(self.text); }
+                    accepted => { self.clear-focus(); }
+                }
+            }
+            Text {
+                text: "max 26 bytes";
+                color: Palette.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        // VID
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "USB VID";
+                color: Palette.text;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: 100px;
+                height: 26px;
+                background: Palette.bg-cell-alt;
+                border-color: vid-ti.has-focus ? Palette.accent : Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                vid-ti := TextInput {
+                    text: root.data.vid-hex;
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    width: parent.width - 12px;
+                    x: 6px;
+                    edited => { root.vid-edited(self.text); }
+                    accepted => { self.clear-focus(); }
+                }
+            }
+            Text {
+                text: "hex (0..ffff)";
+                color: Palette.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        // PID
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "USB PID";
+                color: Palette.text;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: 100px;
+                height: 26px;
+                background: Palette.bg-cell-alt;
+                border-color: pid-ti.has-focus ? Palette.accent : Palette.border;
+                border-width: 1px;
+                border-radius: 3px;
+                pid-ti := TextInput {
+                    text: root.data.pid-hex;
+                    color: Palette.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    width: parent.width - 12px;
+                    x: 6px;
+                    edited => { root.pid-edited(self.text); }
+                    accepted => { self.clear-focus(); }
+                }
+            }
+            Text {
+                text: "hex (0..ffff)";
+                color: Palette.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle { height: 8px; }
+        Text {
+            text: "Read-only";
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "Firmware version";
+                color: Palette.text-dim;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.data.firmware-version-hex;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "Board id";
+                color: Palette.text-dim;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.data.board-id;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "FreeJoyX build";
+                color: Palette.text-dim;
+                font-size: 12px;
+                width: 130px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.data.freejoyx-version;
+                color: Palette.text;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+    }
+}

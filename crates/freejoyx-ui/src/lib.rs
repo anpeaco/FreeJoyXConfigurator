@@ -21,12 +21,11 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::similar_names)] // pin-row variables are intentionally close
 
-mod advanced;
 pub mod app;
-mod buttons;
-mod encoders;
+pub mod debug_log;
 pub mod log_dir;
 mod settings;
+mod tabs;
 
 pub use app::run;
 

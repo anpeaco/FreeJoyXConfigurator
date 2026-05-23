@@ -1,0 +1,110 @@
+import { Palette } from "../globals/palette.slint";
+import { AxisRow } from "../types.slint";
+import { AxisRowView } from "../rows/axis_row_view.slint";
+
+export component AxesTab inherits Rectangle {
+    in property <[AxisRow]> axes;
+    // Total content height in the Flickable. Driven Rust-side from the
+    // per-row collapsed/expanded heights so collapsed rows don't leave
+    // empty scroll space below the list.
+    in property <length> viewport-height: 1408px;
+    /// Pin-jump target. Set by Rust on `pin-jump-clicked`, cleared
+    /// back to -1 by the flash-timeout. `AxisRowView` reads this to
+    /// pulse the matching row.
+    in property <int> flash-slot: -1;
+    /// Y-offset (positive, content space) of the row to scroll into
+    /// view. Together with `jump-tick`, drives the Flickable's
+    /// `viewport-y`. Setting it without bumping `jump-tick` is a no-op.
+    in property <length> jump-y: 0px;
+    /// Monotonic counter Rust bumps when issuing a scroll. The
+    /// Flickable's `changed jump-tick =>` handler reads `jump-y` and
+    /// writes `viewport-y = -jump-y` so the target row lands at the
+    /// top of the visible area.
+    in property <int> jump-tick: 0;
+    callback out-toggled(int);
+    callback inverted-toggled(int);
+    callback centered-toggled(int);
+    callback calib-min-edited(int, int);
+    callback calib-center-edited(int, int);
+    callback calib-max-edited(int, int);
+    callback deadband-edited(int, int);
+    callback dyn-deadband-toggled(int);
+    callback dropdown-requested(int, int, length, length, length);
+    callback calibrate-toggled(int);
+    callback reset-clicked(int);
+    callback set-center-clicked(int);
+    callback detect-toggled(int);
+    callback back-to-pin-clicked(int);
+    callback extended-toggled(int);
+    callback offset-edited(int, int);
+    callback step-div-edited(int, int);
+    callback prescaler-edited(int, int);
+    callback buttons-from-axes-edited(int, int);
+    callback btn1-slot-edited(int, int);
+    callback btn2-slot-edited(int, int);
+    callback btn3-slot-edited(int, int);
+
+    // Reactively scroll the Flickable when Rust bumps `jump-tick`.
+    // viewport-y is the content's y-offset (negative when scrolled
+    // down) so we negate `jump-y` here. Handler must live on the
+    // owning element of the watched property, so it sits at root.
+    changed jump-tick => { fl.viewport-y = -root.jump-y; }
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+        alignment: start;
+
+        Text {
+            text: "Axes";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Live raw + output values, source selection with auto-detect, calibration, filter, deadband, resolution, channel.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        fl := Flickable {
+            vertical-stretch: 1;
+            viewport-height: root.viewport-height;
+            VerticalLayout {
+                spacing: 4px;
+                for axis-data[i] in root.axes: AxisRowView {
+                    entry: axis-data;
+                    slot: i;
+                    flash-slot: root.flash-slot;
+                    out-toggled(s) => { root.out-toggled(s); }
+                    inverted-toggled(s) => { root.inverted-toggled(s); }
+                    centered-toggled(s) => { root.centered-toggled(s); }
+                    calib-min-edited(s, v) => { root.calib-min-edited(s, v); }
+                    calib-center-edited(s, v) => { root.calib-center-edited(s, v); }
+                    calib-max-edited(s, v) => { root.calib-max-edited(s, v); }
+                    deadband-edited(s, v) => { root.deadband-edited(s, v); }
+                    dyn-deadband-toggled(s) => { root.dyn-deadband-toggled(s); }
+                    calibrate-toggled(s) => { root.calibrate-toggled(s); }
+                    reset-clicked(s) => { root.reset-clicked(s); }
+                    set-center-clicked(s) => { root.set-center-clicked(s); }
+                    detect-toggled(s) => { root.detect-toggled(s); }
+                    back-to-pin-clicked(s) => { root.back-to-pin-clicked(s); }
+                    extended-toggled(s) => { root.extended-toggled(s); }
+                    offset-edited(s, v) => { root.offset-edited(s, v); }
+                    step-div-edited(s, v) => { root.step-div-edited(s, v); }
+                    prescaler-edited(s, v) => { root.prescaler-edited(s, v); }
+                    buttons-from-axes-edited(s, v) => { root.buttons-from-axes-edited(s, v); }
+                    btn1-slot-edited(s, v) => { root.btn1-slot-edited(s, v); }
+                    btn2-slot-edited(s, v) => { root.btn2-slot-edited(s, v); }
+                    btn3-slot-edited(s, v) => { root.btn3-slot-edited(s, v); }
+                    dropdown-requested(k, s, x, y, w) => {
+                        root.dropdown-requested(k, s, x, y, w);
+                    }
+                }
+            }
+        }
+    }
+}

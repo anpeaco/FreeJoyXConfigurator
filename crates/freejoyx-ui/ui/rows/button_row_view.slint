@@ -1,0 +1,149 @@
+import { Palette } from "../globals/palette.slint";
+import { BtnCols } from "../globals/btn_cols.slint";
+import { ButtonRow } from "../types.slint";
+import { CheckCell } from "../cells/check_cell.slint";
+import { DropdownCell } from "../cells/dropdown_cell.slint";
+import { HeaderCell } from "../cells/header_cell.slint";
+import { LiveDot } from "../cells/live_dot.slint";
+import { NumberCell } from "../cells/number_cell.slint";
+
+export component ButtonRowView inherits Rectangle {
+    in property <ButtonRow> entry;
+    in property <int> slot;
+    /// Encoder→Buttons jump highlight. AppWindow drives both slots
+    /// when the user clicks the jump button on an encoder row; the
+    /// matching A/B button rows pulse and a Rust timer clears them
+    /// after ~1.5 s. -1 = no flash.
+    in property <int> flash-slot-a: -1;
+    in property <int> flash-slot-b: -1;
+    callback physical-edited(int /* slot */, int /* new value */);
+    callback physical-armed-changed(int /* slot */, bool /* armed */);
+    callback inverted-toggled(int);
+    callback disabled-toggled(int);
+    callback src-b-edited(int, int);
+    callback src-b-armed-changed(int /* slot */, bool /* armed */);
+    callback dropdown-requested(int, int, length, length, length);
+
+    property <bool> flashing:
+        root.flash-slot-a == root.slot || root.flash-slot-b == root.slot;
+
+    height: 36px;
+    background: flashing
+        ? Palette.accent
+        : Palette.bg-cell;
+    border-color: flashing
+        ? Palette.accent
+        : (root.entry.logic-error != "" ? Palette.error : Palette.border);
+    border-width: flashing ? 2px : 1px;
+    border-radius: 4px;
+    animate background { duration: 250ms; easing: ease-in-out; }
+    animate border-color { duration: 250ms; easing: ease-in-out; }
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: BtnCols.spacing;
+        alignment: start;
+
+        HeaderCell {
+            text: (root.slot + 1) + ".";
+            col-width: BtnCols.w-num;
+            hpad: TextHorizontalAlignment.right;
+        }
+        NumberCell {
+            compact: true;
+            capture-on-focus: true;
+            disarm-tick: root.entry.physical-disarm-tick;
+            value: root.entry.physical-num;
+            field-width: BtnCols.w-phy;
+            edited(v) => { root.physical-edited(root.slot, v); }
+            armed-changed(a) => { root.physical-armed-changed(root.slot, a); }
+        }
+        DropdownCell {
+            value-label: root.entry.type-label;
+            value-width: BtnCols.w-type;
+            kind: 1;  // DropdownKind::ButtonType
+            slot: root.slot;
+            popup-width: 260px;
+            clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+        }
+        DropdownCell {
+            compact: true;
+            disabled: !root.entry.op-enabled;
+            value-label: root.entry.op-enabled ? root.entry.op-label : "—";
+            value-width: BtnCols.w-op;
+            kind: 3;  // DropdownKind::ButtonOp
+            slot: root.slot;
+            popup-width: 160px;
+            tooltip: root.entry.op-tooltip;
+            clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+        }
+        NumberCell {
+            compact: true;
+            disabled: !root.entry.src-b-enabled;
+            capture-on-focus: root.entry.src-b-enabled;
+            disarm-tick: root.entry.src-b-disarm-tick;
+            value: root.entry.src-b;
+            field-width: BtnCols.w-srcb;
+            edited(v) => { root.src-b-edited(root.slot, v); }
+            armed-changed(a) => { root.src-b-armed-changed(root.slot, a); }
+        }
+        DropdownCell {
+            compact: true;
+            value-label: root.entry.shift-modificator == 0
+                ? "—" : "Shift " + root.entry.shift-modificator;
+            value-width: BtnCols.w-shift;
+            kind: 2;  // DropdownKind::ButtonShift
+            slot: root.slot;
+            popup-width: 96px;
+            clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+        }
+        DropdownCell {
+            compact: true;
+            disabled: !root.entry.delay-enabled;
+            value-label: root.entry.delay-enabled ? root.entry.delay-label : "—";
+            value-width: BtnCols.w-delay;
+            kind: 4;  // DropdownKind::ButtonDelay
+            slot: root.slot;
+            popup-width: 120px;
+            clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+        }
+        DropdownCell {
+            compact: true;
+            disabled: !root.entry.press-enabled;
+            value-label: root.entry.press-enabled ? root.entry.press-label : "—";
+            value-width: BtnCols.w-press;
+            kind: 12;  // DropdownKind::ButtonPress
+            slot: root.slot;
+            popup-width: 120px;
+            clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+        }
+        CheckCell {
+            compact: true;
+            checked: root.entry.is-inverted;
+            toggled => { root.inverted-toggled(root.slot); }
+        }
+        CheckCell {
+            compact: true;
+            checked: root.entry.is-disabled;
+            toggled => { root.disabled-toggled(root.slot); }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        HorizontalLayout {
+            spacing: 4px;
+            width: BtnCols.w-live;
+            alignment: center;
+            LiveDot {
+                on: root.entry.phy-pressed;
+                y: (parent.height - self.height) / 2;
+            }
+            LiveDot {
+                on: root.entry.log-pressed;
+                on-color: Palette.success;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+    }
+}

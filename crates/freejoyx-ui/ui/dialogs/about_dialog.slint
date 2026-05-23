@@ -1,0 +1,60 @@
+import { Palette } from "../globals/palette.slint";
+import { PillButton } from "../cells/pill_button.slint";
+
+export component AboutDialog inherits Rectangle {
+    in property <string> app-version;
+    in property <string> build-rev;
+    in property <string> supported-fw;
+    callback closed();
+
+    background: Palette.bg-panel;
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 8px;
+    width: 480px;
+    height: 320px;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 8px;
+        Text {
+            text: "FreeJoyXConfigurator";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        Text {
+            text: "Version " + root.app-version + " (" + root.build-rev + ")";
+            color: Palette.text;
+            font-size: 12px;
+        }
+        Rectangle { height: 8px; }
+        Text {
+            text: "Native Rust + Slint configurator for FreeJoyX firmware.";
+            color: Palette.text;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: "Supports firmware mask group 0x" + root.supported-fw + ". For legacy upstream FreeJoy boards on the 0x17XX line, use the Qt configurator (FreeJoyConfiguratorQt).";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+        Rectangle { height: 8px; }
+        Text {
+            text: "Licensed GPLv3. Source: github.com/anpeaco/FreeJoyXConfigurator";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            alignment: end;
+            PillButton {
+                label: "Close";
+                clicked => { root.closed(); }
+            }
+        }
+    }
+}

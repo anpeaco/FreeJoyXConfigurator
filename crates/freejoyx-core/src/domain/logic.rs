@@ -39,11 +39,14 @@ pub enum LogicOp {
     Nand = 4,
     Xor = 5,
     AAndNotB = 6,
+    /// `LOGIC_OP_XNOR` — added in firmware 0x0020. Fits the 3-bit `op`
+    /// field; `LOGIC_OP_COUNT` is now 8 so the field is at capacity.
+    Xnor = 7,
 }
 
 impl LogicOp {
-    /// Map the raw 3-bit op field. Returns `None` for the unused
-    /// `LOGIC_OP_COUNT` (7) sentinel.
+    /// Map the raw 3-bit op field. All eight values are now operator
+    /// codes (firmware 0x0020 filled the last slot with `LOGIC_OP_XNOR`).
     #[must_use]
     pub fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
@@ -54,6 +57,7 @@ impl LogicOp {
             4 => Self::Nand,
             5 => Self::Xor,
             6 => Self::AAndNotB,
+            7 => Self::Xnor,
             _ => return None,
         })
     }
@@ -64,6 +68,41 @@ impl LogicOp {
     pub fn is_binary(self) -> bool {
         !matches!(self, Self::Not)
     }
+
+    /// Display string for pickers and selected-value cells. Uppercase
+    /// to match how users write boolean algebra and to read as an
+    /// operator label, not as prose.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::And => "AND",
+            Self::Or => "OR",
+            Self::Not => "NOT",
+            Self::Nor => "NOR",
+            Self::Nand => "NAND",
+            Self::Xor => "XOR",
+            Self::AAndNotB => "A AND NOT B",
+            Self::Xnor => "XNOR",
+        }
+    }
+
+    /// One-line plain-English summary of when the virtual button fires.
+    /// Surfaces on the LOGIC op cell as a hover tooltip so users
+    /// learning the operator set don't need to keep a truth table in
+    /// their head.
+    #[must_use]
+    pub fn truth_summary(self) -> &'static str {
+        match self {
+            Self::And => "Fires when Source A and Source B are both pressed.",
+            Self::Or => "Fires when Source A or Source B is pressed.",
+            Self::Not => "Fires when Source A is not pressed.",
+            Self::Nor => "Fires when neither Source A nor Source B is pressed.",
+            Self::Nand => "Fires unless both Source A and Source B are pressed.",
+            Self::Xor => "Fires when exactly one of Source A or Source B is pressed.",
+            Self::AAndNotB => "Fires when Source A is pressed and Source B is not.",
+            Self::Xnor => "Fires when Source A and Source B match (both pressed or both released).",
+        }
+    }
 }
 
 /// One reason a LOGIC button slot is incomplete.
@@ -73,7 +112,10 @@ pub enum LogicError {
     SourceAUnset { button_index: usize },
     /// Binary op picked but `src_b` is the `-1` sentinel.
     SourceBUnsetForBinaryOp { button_index: usize, op: LogicOp },
-    /// `op` field holds the reserved `LOGIC_OP_COUNT` value (7).
+    /// `op` field holds a value not mapped to any [`LogicOp`]. With
+    /// firmware 0x0020 every 3-bit value (0..=7) is a valid operator
+    /// (XNOR fills slot 7), so this variant is unreachable today; kept
+    /// for forward compatibility if the wire-format ever widens `op`.
     OpOutOfRange { button_index: usize, op_raw: u8 },
 }
 
@@ -176,15 +218,21 @@ mod tests {
     }
 
     #[test]
-    fn op_count_sentinel_flagged() {
+    fn xnor_is_a_valid_binary_op() {
+        // Firmware 0x0020 added LOGIC_OP_XNOR at slot 7. With both
+        // sources set the slot is well-formed; with src_b unset it
+        // flags the same binary-op violation as the other binary ops.
         let mut cfg = empty_config();
-        cfg.buttons[0] = make_logic_button(3, 4, 7); // LOGIC_OP_COUNT
-        let errs = validate_logic_buttons(&cfg);
+        cfg.buttons[0] = make_logic_button(3, 4, LogicOp::Xnor as u8);
+        assert!(validate_logic_buttons(&cfg).is_empty());
+
+        let mut cfg = empty_config();
+        cfg.buttons[0] = make_logic_button(3, -1, LogicOp::Xnor as u8);
         assert_eq!(
-            errs,
-            vec![LogicError::OpOutOfRange {
+            validate_logic_buttons(&cfg),
+            vec![LogicError::SourceBUnsetForBinaryOp {
                 button_index: 0,
-                op_raw: 7,
+                op: LogicOp::Xnor,
             }]
         );
     }

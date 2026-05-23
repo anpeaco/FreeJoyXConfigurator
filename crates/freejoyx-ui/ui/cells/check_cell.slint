@@ -1,0 +1,43 @@
+import { Palette } from "../globals/palette.slint";
+
+export component CheckCell inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked;
+    /// When set, hide the trailing label so the cell is a bare
+    /// check-square sized for a table column.
+    in property <bool> compact: false;
+    callback toggled();
+
+    height: 26px;
+    min-width: root.compact ? 26px : 70px;
+    background: ta.has-hover ? Palette.bg-cell-hover : Palette.bg-cell-alt;
+    border-color: root.checked ? Palette.accent : Palette.border;
+    border-width: 1px;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: root.compact ? 0px : 8px;
+        padding-right: root.compact ? 0px : 8px;
+        spacing: 6px;
+        alignment: center;
+        Rectangle {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            border-color: Palette.border;
+            border-width: 1px;
+            background: root.checked ? Palette.accent : transparent;
+            y: (parent.height - self.height) / 2;
+        }
+        if !root.compact: Text {
+            text: root.label;
+            color: Palette.text;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => { root.toggled(); }
+    }
+}

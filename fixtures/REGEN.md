@@ -19,7 +19,7 @@ is unchanged — fixtures stay valid; do not regenerate.
 ## Prerequisites
 
 - A healthy FreeJoyX board (BluePill or BlackPill) running the target
-  `FIRMWARE_VERSION` (currently `0x0010`).
+  `FIRMWARE_VERSION` (currently `0x0020`).
 - A working build of `FreeJoyXConfiguratorQt` on a throwaway branch.
   The branch has `docs/qt-capture-patch.diff` applied (see that file
   for the patch and notes).
@@ -82,7 +82,8 @@ The branch is throwaway — do not commit changes to FreeJoyXConfiguratorQt.
 4. In the Qt app: click **Read from device**. Wait until the title bar
    or log shows the config arrived ("All config received").
 5. Close the Qt app. Confirm three files exist in `fixtures/minimal/`:
-   - `config.bin` (size = 1580 bytes for v0.0.10 / `FIRMWARE_VERSION = 0x0010`)
+   - `config.bin` (size = 1580 bytes for `FIRMWARE_VERSION = 0x0020`;
+     unchanged from the 0x0010 generation since the bump was semantic only)
    - `config.fragments.bin` (size = 26 × 64 = 1664 bytes)
    - `params.bin` (some multiple of 64; depends on capture duration)
 6. Hand-author `fixtures/minimal/expected.ron` from the factory-default
@@ -119,13 +120,13 @@ matches before capturing.
   - Row 3: LOGIC, op = NOT, source-A = 0 (single-source op)
   - Row 4: LOGIC, op = A_AND_NOT_B, source-A = 0, source-B = 1
   - Row 5: POV1_UP, physical 2
-  - Row 6: LONG_PRESS, physical 3
+  - Row 6: TAP, physical 3  (renamed from LONG_PRESS in firmware 0x0020)
   - Row 7: DOUBLE_TAP, physical 4
   - Row 8: NORMAL, physical 5, **inverted = true**, shift modifier = Shift 1
   - Row 9: NORMAL, physical 6, **disabled = true**
 - **Shifts & Timers tab:**
   - Timer 1 = 250 ms, Timer 2 = 500 ms, Timer 3 = 1000 ms, Debounce = 30 ms
-  - Long-press threshold = 600 ms, Double-tap window = 350 ms
+  - Tap cutoff = 600 ms, Double-tap window = 350 ms
   - Shift 1 source = physical 7
 - **Axes (axis 0 and axis 1):**
   - Axis 0: calib_min = 100, calib_center = 2048, calib_max = 4000,
@@ -177,7 +178,7 @@ you do, which would pollute this fixture):
 4. Rotate the encoder one full turn in each direction.
 5. Trigger a shift register state change (close one of the chained
    button inputs).
-6. Hold a button for >600ms to trigger LONG_PRESS.
+6. Tap a TAP-configured button (release within the cutoff window) to trigger it.
 7. Double-tap one of the DOUBLE_TAP-configured buttons.
 
 Close the Qt app. `fixtures/params_stream/params.bin` should be ~6000

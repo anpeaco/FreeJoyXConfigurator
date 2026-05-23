@@ -17,9 +17,12 @@
 #![warn(clippy::pedantic)]
 
 pub mod error;
+pub(crate) mod subscription;
 pub mod transport;
 pub mod worker;
 
 pub use error::TransportError;
-pub use transport::{enumerate, Device, DeviceCandidate};
+pub use transport::{
+    config_dump_enabled, enumerate, set_config_dump_enabled, Device, DeviceCandidate, Transport,
+};
 pub use worker::{spawn, spawn_for_serial, Command, DeviceEvent, DeviceHandle};

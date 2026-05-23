@@ -12,13 +12,39 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use freejoyx_core::domain::{
-    physical_assignment_blocked, validate_logic_buttons, ButtonType, ButtonTypeCategory,
-    CoexistenceCheck, LogicError, LogicOp, BUTTON_TYPE_LOGIC,
+    physical_assignment_blocked, validate_logic_buttons, ButtonCapture, ButtonType,
+    ButtonTypeCategory, CaptureTarget, CoexistenceCheck, LogicError, LogicOp, BUTTON_TYPE_LOGIC,
 };
 use freejoyx_core::wire::{Button, DeviceConfig, ParamsReport, MAX_BUTTONS_NUM, MAX_SHIFTS_NUM};
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, SharedString, VecModel};
 
 use crate::{AppWindow, ButtonRow, DropdownEntry, ShiftSlot, TimerField};
+
+/// Does any button slot have a meaningful assignment? A slot counts as
+/// configured when it carries a physical mapping OR a non-NORMAL type
+/// (LOGIC, TOGGLE, POV, etc.) — `physical_num >= 0` covers the everyday
+/// "I've assigned this button" case; `button_type != 0` catches LOGIC
+/// slots that may not have a physical yet but are still in-progress.
+#[must_use]
+pub fn has_content(cfg: &DeviceConfig) -> bool {
+    cfg.buttons
+        .iter()
+        .any(|b| b.physical_num >= 0 || b.button_type != 0)
+}
+
+/// Does the Shifts & Timers tab have any non-default configuration?
+/// Today: any of the 5 shift modificators on any button is non-zero,
+/// or any timer field is non-default (zero on the wire).
+#[must_use]
+pub fn shifts_has_content(cfg: &DeviceConfig) -> bool {
+    cfg.buttons.iter().any(|b| b.shift_modificator() != 0)
+        || cfg.button_timer1_ms != 0
+        || cfg.button_timer2_ms != 0
+        || cfg.button_timer3_ms != 0
+        || cfg.button_debounce_ms != 0
+        || cfg.encoder_press_time_ms != 0
+        || cfg.a2b_debounce_ms != 0
+}
 
 /// Number of editable timer fields surfaced on the Shifts & Timers tab.
 /// Indices map to `TIMER_FIELDS` below.
@@ -114,26 +140,67 @@ fn slot_visible(filter: &ButtonFilter<'_>, slot: usize, btn: &Button) -> bool {
     true
 }
 
-/// Rebuild the button-row model honoring the current filter. Always
-/// rebuilds wholesale because the visible row count can change row-to-
-/// row when any filter input flips. Live-tick refreshes from
-/// [`refresh_button_row`] still hit individual rows by wire-slot.
+/// Rebuild the button-row model honoring the current filter. Updates
+/// in-place when the visible-slot set hasn't changed (preserves Slint
+/// element identity — critical, otherwise the per-tick rebuild from
+/// `ParamsTick` destroys/recreates each row's `TextInput` and steals
+/// focus from any cell the user is editing or arming for capture).
+/// Falls back to a full wipe-and-push only when filters / `+Add`
+/// promotion change which slots are visible.
 pub fn refresh_button_model(
     model: &Rc<VecModel<ButtonRow>>,
     cfg: &DeviceConfig,
     params: Option<&ParamsReport>,
     filter: &ButtonFilter<'_>,
+    capture: &ButtonCapture,
 ) {
     let logic_errors = validate_logic_buttons(cfg);
+    let visible_slots: Vec<usize> = (0..MAX_BUTTONS_NUM)
+        .filter(|&s| slot_visible(filter, s, &cfg.buttons[s]))
+        .collect();
+
+    let unchanged_layout = visible_slots.len() == model.row_count()
+        && visible_slots.iter().enumerate().all(|(i, &slot)| {
+            model
+                .row_data(i)
+                .is_some_and(|r| usize::try_from(r.slot).unwrap_or(usize::MAX) == slot)
+        });
+
+    if unchanged_layout {
+        // Dedup: only push a row update when the rebuilt struct
+        // actually differs. Setting row data unconditionally re-fires
+        // the `for ... in model:` binding chain, which re-sets the
+        // focused TextInput's `text` binding — and Slint 1.13 drops
+        // focus from a TextInput whose `text` is reassigned. Without
+        // this guard, the 10 Hz ParamsTick rebuild silently steals
+        // focus from any cell the user just clicked.
+        for (i, &slot) in visible_slots.iter().enumerate() {
+            let new_row = build_button_row(
+                slot,
+                &cfg.buttons[slot],
+                params,
+                &logic_errors,
+                capture.disarm_ticks(slot),
+            );
+            if model.row_data(i).is_some_and(|existing| existing == new_row) {
+                continue;
+            }
+            model.set_row_data(i, new_row);
+        }
+        return;
+    }
+
     while model.row_count() > 0 {
         model.remove(0);
     }
-    for slot in 0..MAX_BUTTONS_NUM {
-        let btn = &cfg.buttons[slot];
-        if !slot_visible(filter, slot, btn) {
-            continue;
-        }
-        model.push(build_button_row(slot, btn, params, &logic_errors));
+    for slot in visible_slots {
+        model.push(build_button_row(
+            slot,
+            &cfg.buttons[slot],
+            params,
+            &logic_errors,
+            capture.disarm_ticks(slot),
+        ));
     }
 }
 
@@ -142,6 +209,7 @@ pub fn build_button_row(
     btn: &Button,
     params: Option<&ParamsReport>,
     logic_errors: &[LogicError],
+    disarm_ticks: (i32, i32),
 ) -> ButtonRow {
     let typed = ButtonType::from_u8(btn.button_type);
     let type_label = typed.map(ButtonType::label).map_or_else(
@@ -150,8 +218,14 @@ pub fn build_button_row(
     );
     let is_logic = btn.button_type == BUTTON_TYPE_LOGIC;
     let op_typed = LogicOp::from_u8(btn.op());
-    let op_label = op_typed.map_or_else(|| format!("?{}", btn.op()), |o| format!("{o:?}"));
-    let debounce_label = timer_picker_label(btn.delay_timer());
+    let op_label = op_typed.map_or_else(|| format!("?{}", btn.op()), |o| o.label().to_string());
+    let op_tooltip = if is_logic {
+        op_typed.map_or("", LogicOp::truth_summary)
+    } else {
+        ""
+    };
+    let delay_label = timer_picker_label(btn.delay_timer());
+    let press_label = timer_picker_label(btn.press_timer());
     let logic_error = logic_errors
         .iter()
         .find(|e| {
@@ -164,7 +238,9 @@ pub fn build_button_row(
         })
         .map(short_logic_error_label)
         .unwrap_or_default();
-    let (phy, log) = pressed_bits(params, slot);
+    let (phy, log) = pressed_bits(params, slot, btn.physical_num);
+    let delay_enabled = typed.is_some_and(button_type_uses_delay_timer);
+    let press_enabled = typed.is_some_and(button_type_uses_press_timer);
     ButtonRow {
         slot: i32::try_from(slot).unwrap_or(0),
         physical_num: i32::from(btn.physical_num),
@@ -177,12 +253,66 @@ pub fn build_button_row(
         src_b: i32::from(btn.src_b),
         op_label: SharedString::from(op_label),
         op_index: i32::from(btn.op()),
-        debounce_label: SharedString::from(debounce_label),
-        debounce_index: i32::from(btn.delay_timer()),
+        op_enabled: is_logic,
+        src_b_enabled: is_logic,
+        op_tooltip: SharedString::from(op_tooltip),
+        delay_label: SharedString::from(delay_label),
+        delay_index: i32::from(btn.delay_timer()),
+        delay_enabled,
+        press_label: SharedString::from(press_label),
+        press_index: i32::from(btn.press_timer()),
+        press_enabled,
         logic_error: SharedString::from(logic_error),
         phy_pressed: phy,
         log_pressed: log,
+        physical_disarm_tick: disarm_ticks.0,
+        src_b_disarm_tick: disarm_ticks.1,
     }
+}
+
+/// Whether the per-button Delay timer field is meaningful for this
+/// button type. Used to grey out the picker on rows where it has no
+/// effect (POV / Encoder inputs).
+fn button_type_uses_delay_timer(t: ButtonType) -> bool {
+    use ButtonType::{
+        EncoderInputA, EncoderInputB, Pov1Center, Pov1Down, Pov1Left, Pov1Right, Pov1Up,
+        Pov2Center, Pov2Down, Pov2Left, Pov2Right, Pov2Up, Pov3Center, Pov3Down, Pov3Left,
+        Pov3Right, Pov3Up, Pov4Center, Pov4Down, Pov4Left, Pov4Right, Pov4Up,
+    };
+    !matches!(
+        t,
+        EncoderInputA
+            | EncoderInputB
+            | Pov1Up
+            | Pov1Right
+            | Pov1Down
+            | Pov1Left
+            | Pov1Center
+            | Pov2Up
+            | Pov2Right
+            | Pov2Down
+            | Pov2Left
+            | Pov2Center
+            | Pov3Up
+            | Pov3Right
+            | Pov3Down
+            | Pov3Left
+            | Pov3Center
+            | Pov4Up
+            | Pov4Right
+            | Pov4Down
+            | Pov4Left
+            | Pov4Center
+    )
+}
+
+/// Whether the per-button Press timer field is meaningful. Used by the
+/// Tap / `DoubleTap` gestures and the basic press-and-hold paths;
+/// greyed out elsewhere (POV / Encoder / Sequential / Radio / Toggle
+/// Switches don't consume it).
+fn button_type_uses_press_timer(t: ButtonType) -> bool {
+    use ButtonType::{DoubleTap, Logic, Normal, Tap, Toggle};
+    matches!(t, Normal | Toggle | Tap | DoubleTap | Logic)
 }
 
 fn timer_picker_label(v: u8) -> String {
@@ -201,14 +331,33 @@ fn short_logic_error_label(e: &LogicError) -> String {
     }
 }
 
-fn pressed_bits(params: Option<&ParamsReport>, slot: usize) -> (bool, bool) {
+fn pressed_bits(
+    params: Option<&ParamsReport>,
+    slot: usize,
+    physical_num: i8,
+) -> (bool, bool) {
     let Some(p) = params else {
         return (false, false);
+    };
+    // The amber `phy` dot reflects the device's raw physical-input
+    // bitmap, indexed by the slot's configured `physical_num` — NOT by
+    // the slot index. Wire format (params.rs): `phy_button_data` =
+    // 128 bits, one per physical button; `log_button_data` = 128 bits,
+    // one per logical slot. Off-by-one bugs here surfaced as "press
+    // physical 20 → amber lights on row 21" because we previously
+    // read `phy_button_data[slot]` instead of `[physical_num]`.
+    let phy = if physical_num >= 0 {
+        let phy_idx = physical_num as usize;
+        let byte = phy_idx / 8;
+        let bit = phy_idx % 8;
+        let mask = 1u8 << bit;
+        p.phy_button_data.get(byte).copied().unwrap_or(0) & mask != 0
+    } else {
+        false
     };
     let byte = slot / 8;
     let bit = slot % 8;
     let mask = 1u8 << bit;
-    let phy = p.phy_button_data.get(byte).copied().unwrap_or(0) & mask != 0;
     let log = p.log_button_data.get(byte).copied().unwrap_or(0) & mask != 0;
     (phy, log)
 }
@@ -282,9 +431,16 @@ pub fn refresh_button_row(
     wire_slot: usize,
     cfg: &DeviceConfig,
     params: Option<&ParamsReport>,
+    disarm_ticks: (i32, i32),
 ) {
     let logic_errors = validate_logic_buttons(cfg);
-    let row = build_button_row(wire_slot, &cfg.buttons[wire_slot], params, &logic_errors);
+    let row = build_button_row(
+        wire_slot,
+        &cfg.buttons[wire_slot],
+        params,
+        &logic_errors,
+        disarm_ticks,
+    );
     let wire_slot_i32 = i32::try_from(wire_slot).unwrap_or(0);
     for visible_idx in 0..model.row_count() {
         if let Some(existing) = model.row_data(visible_idx) {
@@ -364,30 +520,33 @@ pub fn build_button_shift_entries() -> Vec<DropdownEntry> {
     out
 }
 
-/// Flat dropdown entries for the LOGIC Op column. Matches the Qt
-/// configurator's operator labels.
+/// Flat dropdown entries for the LOGIC Op column. Labels come from
+/// [`LogicOp::label`] so the picker and the selected-value cell
+/// (`build_button_row::op_label`) stay in lockstep.
 #[must_use]
 pub fn build_button_op_entries() -> Vec<DropdownEntry> {
     [
-        (LogicOp::And, "AND"),
-        (LogicOp::Or, "OR"),
-        (LogicOp::Not, "NOT"),
-        (LogicOp::Nor, "NOR"),
-        (LogicOp::Nand, "NAND"),
-        (LogicOp::Xor, "XOR"),
-        (LogicOp::AAndNotB, "A AND NOT B"),
+        LogicOp::And,
+        LogicOp::Or,
+        LogicOp::Not,
+        LogicOp::Nor,
+        LogicOp::Nand,
+        LogicOp::Xor,
+        LogicOp::AAndNotB,
+        LogicOp::Xnor,
     ]
     .iter()
-    .map(|(op, label)| flat_entry(label, i32::from(*op as u8)))
+    .map(|op| flat_entry(op.label(), i32::from(*op as u8)))
     .collect()
 }
 
-/// Flat dropdown entries for the LOGIC Debounce column. Mirrors the
-/// `timer_picker_label` shape used in the row's value cell.
+/// Flat dropdown entries for the per-button Delay timer and Press
+/// timer columns. Mirrors the `timer_picker_label` shape used in the
+/// row's value cell.
 #[must_use]
-pub fn build_button_debounce_entries() -> Vec<DropdownEntry> {
+pub fn build_button_timer_entries() -> Vec<DropdownEntry> {
     let mut out = Vec::with_capacity(4);
-    out.push(flat_entry("off", 0));
+    out.push(flat_entry("—", 0));
     for i in 1..=3 {
         out.push(flat_entry(&format!("Timer {i}"), i));
     }
@@ -482,85 +641,13 @@ pub fn wire_callbacks(
     }));
     window.on_button_inverted_toggled(mk_btn_toggle(|b| b.set_is_inverted(!b.is_inverted())));
     window.on_button_disabled_toggled(mk_btn_toggle(|b| b.set_is_disabled(!b.is_disabled())));
-    {
-        let mk_picked = |cb: fn(&mut Button, i32)| mk_btn_int(cb);
-        window.on_button_shift_picked(mk_picked(|b, v| {
-            let clamped = u8::try_from(v.clamp(0, 8)).unwrap_or(0);
-            b.set_shift_modificator(clamped);
-        }));
-        window.on_button_op_picked(mk_picked(|b, v| {
-            let clamped = u8::try_from(v.clamp(0, 6)).unwrap_or(0);
-            b.set_op(clamped);
-        }));
-        window.on_button_debounce_picked(mk_picked(|b, v| {
-            let clamped = u8::try_from(v.clamp(0, 3)).unwrap_or(0);
-            b.set_delay_timer(clamped);
-        }));
-    }
 
-    // Inline Type-picker (issue #15) — refresh per-slot blocked flags
-    // on the shared entries model right before the popup shows. Pick
-    // re-checks coexistence in case the config drifted while the popup
-    // was open.
-    let type_entries_model: Rc<VecModel<DropdownEntry>> =
-        Rc::new(VecModel::from(build_button_type_entries(None)));
-    window.set_button_type_entries(ModelRc::from(type_entries_model.clone()));
-    {
-        let s = state.clone();
-        let entries = type_entries_model.clone();
-        window.on_button_type_opening(move |slot| {
-            let Ok(slot_usz) = usize::try_from(slot) else {
-                return;
-            };
-            let st = s.borrow();
-            let Some(cfg) = st.last_config.as_ref() else {
-                return;
-            };
-            if slot_usz >= MAX_BUTTONS_NUM {
-                return;
-            }
-            let phy = cfg.buttons[slot_usz].physical_num;
-            let fresh = build_button_type_entries(Some((&cfg.buttons, slot_usz, phy)));
-            while entries.row_count() > 0 {
-                entries.remove(0);
-            }
-            for e in fresh {
-                entries.push(e);
-            }
-        });
-    }
-    {
-        let s = state.clone();
-        let m = button_model.clone();
-        let w = window.as_weak();
-        window.on_button_type_picked(move |slot, value| {
-            let Ok(slot_usz) = usize::try_from(slot) else {
-                return;
-            };
-            let Ok(value_u8) = u8::try_from(value) else {
-                return;
-            };
-            if ButtonType::from_u8(value_u8).is_none() {
-                return;
-            }
-            let _ = with_button_slot(&s, slot_usz, |b, all_buttons| {
-                let candidate = ButtonType::from_u8(value_u8).unwrap_or(ButtonType::Normal);
-                match physical_assignment_blocked(all_buttons, slot_usz, b.physical_num, candidate)
-                {
-                    CoexistenceCheck::Ok => {
-                        b.button_type = value_u8;
-                    }
-                    CoexistenceCheck::Blocked { .. } => {}
-                }
-            });
-            refresh_after_button_edit(&s, &m, slot_usz);
-            mark_dirty(&w);
-        });
-    }
+    wire_button_capture_callbacks(window, state, button_model);
 
     // Issue #5 filter callbacks. Each mutates State + rebuilds the
     // button model + pushes the UI mirrors so the strip's checkboxes /
-    // labels reflect the current filter.
+    // labels reflect the current filter. (The Type filter cell goes
+    // through the dropdown dispatch in `app::wire_dropdown_callbacks`.)
     wire_filter_callbacks(window, state, button_model);
 
     // Shift slot edit (i8 button index, -1 = unused).
@@ -636,7 +723,13 @@ fn refresh_after_button_edit(
 ) {
     let s = state.borrow();
     if let Some(cfg) = s.last_config.as_ref() {
-        refresh_button_row(button_model, slot, cfg, s.last_params.as_ref());
+        refresh_button_row(
+            button_model,
+            slot,
+            cfg,
+            s.last_params.as_ref(),
+            s.button_capture.disarm_ticks(slot),
+        );
     }
 }
 
@@ -646,7 +739,7 @@ fn clamp_i8(v: i32) -> i8 {
 
 /// Rebuild the button model from current state + push the visible-count
 /// mirror to the UI. Used by every filter callback below.
-fn rebuild_filtered(
+pub(crate) fn rebuild_filtered(
     state: &Rc<RefCell<crate::app::State>>,
     button_model: &Rc<VecModel<ButtonRow>>,
     window: &slint::Weak<AppWindow>,
@@ -656,7 +749,13 @@ fn rebuild_filtered(
         return;
     };
     let filter = crate::app::build_button_filter(&s);
-    refresh_button_model(button_model, cfg, s.last_params.as_ref(), &filter);
+    refresh_button_model(
+        button_model,
+        cfg,
+        s.last_params.as_ref(),
+        &filter,
+        &s.button_capture,
+    );
     let visible = i32::try_from(button_model.row_count()).unwrap_or(0);
     if let Some(w) = window.upgrade() {
         w.set_buttons_visible_count(visible);
@@ -667,11 +766,116 @@ fn rebuild_filtered(
             .and_then(|i| ButtonTypeCategory::all().nth(i))
             .map_or("All", ButtonTypeCategory::label);
         w.set_buttons_filter_category_label(SharedString::from(label));
-        w.set_buttons_filter_category_value(
-            s.btn_filter_category
-                .and_then(|i| i32::try_from(i).ok())
-                .unwrap_or(-1),
-        );
+    }
+}
+
+/// Wire the armed-changed callbacks on the Buttons-tab `physical_num`
+/// and LOGIC `src_b` cells. Arming (click) snapshots the current
+/// physical bitmap as a baseline so a button held at click time doesn't
+/// auto-latch, and stashes a [`CaptureTarget`] in
+/// `state.button_capture`. Disarming (second click, 5 s timeout, or
+/// successful capture) clears it. The actual physical → field write
+/// happens on the next `ParamsTick` via
+/// [`ButtonCapture::on_params_tick`].
+fn wire_button_capture_callbacks(
+    window: &AppWindow,
+    state: &Rc<RefCell<crate::app::State>>,
+    button_model: &Rc<VecModel<ButtonRow>>,
+) {
+    {
+        let s = state.clone();
+        let m = button_model.clone();
+        let w = window.as_weak();
+        window.on_button_physical_armed_changed(move |slot, armed| {
+            let Ok(slot) = usize::try_from(slot) else {
+                return;
+            };
+            // Arming a per-row Physical cell takes over capture; the
+            // tab-level "press to filter" arm has to step aside so the
+            // next press writes to the cell, not the filter.
+            if armed {
+                disarm_buttons_filter(&s, &w);
+            }
+            handle_arm_change(&s, &m, armed, CaptureTarget::Physical(slot));
+        });
+    }
+    {
+        let s = state.clone();
+        let m = button_model.clone();
+        window.on_button_src_b_armed_changed(move |slot, armed| {
+            let Ok(slot) = usize::try_from(slot) else {
+                return;
+            };
+            handle_arm_change(&s, &m, armed, CaptureTarget::SrcB(slot));
+        });
+    }
+}
+
+/// Drop the buttons-tab press-to-filter arm. Idempotent — safe to call
+/// when nothing is armed. Used by the tab-switch hook in app.slint and
+/// by the per-row Physical cell arming path.
+fn disarm_buttons_filter(
+    state: &Rc<RefCell<crate::app::State>>,
+    window: &slint::Weak<AppWindow>,
+) {
+    let was_armed = {
+        let mut st = state.borrow_mut();
+        let prev = st.btn_filter_arm;
+        st.btn_filter_arm = false;
+        prev
+    };
+    if was_armed {
+        if let Some(win) = window.upgrade() {
+            win.set_buttons_filter_arm(false);
+        }
+    }
+}
+
+/// Apply an arm or disarm signal from a `NumberCell`. Arming snapshots
+/// the bitmap baseline (so a held button doesn't auto-latch) and
+/// installs `cap` as the active capture target — `ButtonCapture::arm`
+/// bumps the previous target's disarm tick so its cell drops out of
+/// capture mode (rule c: "user selects another phys button row box").
+/// Disarming clears the capture only if it still matches `cap`, so a
+/// stale disarm from a timed-out cell doesn't stomp a freshly-armed
+/// neighbour. Uses `clear()` (no bump) on the disarm path because the
+/// cell already knows it's disarming.
+fn handle_arm_change(
+    state: &Rc<RefCell<crate::app::State>>,
+    button_model: &Rc<VecModel<ButtonRow>>,
+    armed: bool,
+    cap: CaptureTarget,
+) {
+    let previous_slot = {
+        let mut st = state.borrow_mut();
+        if armed {
+            if let Some(p) = st.last_params.as_ref() {
+                st.last_phy_button_data = p.phy_button_data;
+            }
+            let prev = st.button_capture.armed();
+            st.button_capture.arm(cap);
+            match prev {
+                Some(prev_cap) if prev_cap != cap => Some(prev_cap.slot()),
+                _ => None,
+            }
+        } else {
+            if st.button_capture.armed() == Some(cap) {
+                st.button_capture.clear();
+            }
+            None
+        }
+    };
+    if let Some(slot_to_refresh) = previous_slot {
+        let s = state.borrow();
+        if let Some(cfg) = s.last_config.as_ref() {
+            refresh_button_row(
+                button_model,
+                slot_to_refresh,
+                cfg,
+                s.last_params.as_ref(),
+                s.button_capture.disarm_ticks(slot_to_refresh),
+            );
+        }
     }
 }
 
@@ -722,18 +926,23 @@ fn wire_filter_callbacks(
     }
     {
         let s = state.clone();
-        let m = button_model.clone();
         let w = window.as_weak();
-        window.on_buttons_filter_category_picked(move |value| {
-            {
+        window.on_buttons_filter_arm_toggled(move || {
+            let new_arm = {
                 let mut st = s.borrow_mut();
-                st.btn_filter_category = if value < 0 {
-                    None
-                } else {
-                    usize::try_from(value).ok()
-                };
+                st.btn_filter_arm = !st.btn_filter_arm;
+                st.btn_filter_arm
+            };
+            if let Some(win) = w.upgrade() {
+                win.set_buttons_filter_arm(new_arm);
             }
-            rebuild_filtered(&s, &m, &w);
+        });
+    }
+    {
+        let s = state.clone();
+        let w = window.as_weak();
+        window.on_buttons_filter_disarm(move || {
+            disarm_buttons_filter(&s, &w);
         });
     }
     {

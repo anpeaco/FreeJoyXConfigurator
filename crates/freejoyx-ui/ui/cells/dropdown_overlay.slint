@@ -1,0 +1,187 @@
+import { Palette } from "../globals/palette.slint";
+import { DropdownEntry } from "../types.slint";
+
+// Global dropdown overlay (issue #15). Lives at AppWindow level so
+// its absolute positioning isn't fighting any Flickable's coordinate
+// system. Activated by `AppWindow.dropdown-open` and positioned by
+// the anchor coords + width the source cell reports through its
+// `clicked` callback.
+export component DropdownOverlay inherits Rectangle {
+    in property <length> anchor-x;
+    in property <length> anchor-y;
+    in property <length> anchor-w;
+    in property <length> cap-height: 320px;
+    in property <[DropdownEntry]> entries;
+    in property <int> current-value;
+    callback picked(int /* value */);
+    callback dismissed();
+
+    // Internal scroll state — manual wheel scrolling for tall lists
+    // (the Buttons Type picker has 47 entries; the Pin Function
+    // picker has ~30+).
+    property <length> scroll-y: 0px;
+    // Headers are 24 px, regular entries 22 px + 1 px spacing — round
+    // up to 25 px per row so a list dominated by headers doesn't clip
+    // its bottom. The 24 px overhead covers padding-top + padding-bottom
+    // on the inner VerticalLayout (6 + 8) plus a small slack so the
+    // last row never hugs the panel border.
+    property <length> content-height: root.entries.length * 25px + 24px;
+    property <length> visible-height:
+        root.content-height < root.cap-height
+            ? root.content-height
+            : root.cap-height;
+
+    // Fullscreen click-outside catcher.
+    width: 100%;
+    height: 100%;
+    background: transparent;
+
+    backdrop := TouchArea {
+        clicked => { root.dismissed(); }
+    }
+
+    property <bool> needs-scrollbar: root.content-height > root.visible-height;
+
+    // Edge-aware positioning so dropdowns near the right or bottom of
+    // the window don't get clipped. Constants below match the gap
+    // (`+2px`) and pill height (22 px) that `DropdownCell` builds into
+    // its `anchor-y` payload — if those change there, mirror here.
+    property <length> below-overflow:
+        root.anchor-y + root.visible-height - root.height;
+    property <length> above-space: root.anchor-y - 26px - root.visible-height;
+    // Panel y: prefer below; if we'd clip and there's room above, flip
+    // above the cell; otherwise pin to the window bottom and accept
+    // overlap (only happens when both sides have less room than the
+    // popup itself).
+    property <length> panel-y:
+        below-overflow <= 0px
+            ? root.anchor-y
+            : (above-space >= 0px
+                ? root.anchor-y - 26px - root.visible-height
+                : max(0px, root.height - root.visible-height));
+    // Panel x: shift left when the natural placement would clip the
+    // right edge. Negative clamp guards against an anchor that's
+    // already outside the window on the left.
+    property <length> panel-x:
+        root.anchor-x + root.anchor-w > root.width
+            ? max(0px, root.width - root.anchor-w)
+            : root.anchor-x;
+
+    panel := Rectangle {
+        x: panel-x;
+        y: panel-y;
+        width: root.anchor-w;
+        height: root.visible-height;
+        background: Palette.bg-panel;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 4px;
+        clip: true;
+
+        // Wheel-scroll handler wraps the layout instead of sitting
+        // as a sibling above it. Slint resolves a pointer event by
+        // walking down the visual tree to find the topmost TouchArea
+        // at the cursor — a sibling TouchArea declared *after* the
+        // layout renders on top of every entry and eats clicks/hover
+        // events that should reach `entry-ta`. As a wrapping parent,
+        // this `wheel` only catches events its descendants don't
+        // claim, so entry clicks/hovers fire as expected while
+        // unhandled scroll events still bubble up here.
+        wheel := TouchArea {
+            scroll-event(event) => {
+                if (root.content-height > root.visible-height) {
+                    root.scroll-y = max(
+                        root.visible-height - root.content-height,
+                        min(0px, root.scroll-y + event.delta-y));
+                }
+                return accept;
+            }
+
+            VerticalLayout {
+                y: root.scroll-y;
+                padding-left: 4px;
+                padding-right: 4px;
+                padding-top: 6px;
+                padding-bottom: 8px;
+                spacing: 1px;
+                for entry[i] in root.entries: Rectangle {
+                    height: entry.is-header ? 24px : 22px;
+                    property <bool> is-current:
+                        !entry.is-header && entry.value == root.current-value;
+                    background: entry.is-header
+                        ? Palette.bg-cell-alt
+                        : (entry-ta.has-hover && !entry.blocked
+                            ? Palette.bg-cell-hover
+                            : (is-current ? Palette.bg-cell-alt : transparent));
+                    border-color: is-current ? Palette.accent : transparent;
+                    border-width: is-current ? 1px : 0px;
+                    border-radius: 3px;
+
+                    HorizontalLayout {
+                        padding-left: entry.is-header ? 6px : 14px;
+                        padding-right: 6px;
+                        spacing: 4px;
+                        Text {
+                            text: entry.label;
+                            color: entry.is-header
+                                ? Palette.accent
+                                : (entry.blocked
+                                    ? Palette.text-dim
+                                    : (is-current ? Palette.accent : Palette.text));
+                            font-size: entry.is-header ? 11px : 12px;
+                            font-weight: entry.is-header ? 700 : 400;
+                            letter-spacing: entry.is-header ? 0.6px : 0px;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if !entry.is-header && entry.blocked: Text {
+                            text: entry.blocked-reason;
+                            color: Palette.text-dim;
+                            font-size: 10px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    entry-ta := TouchArea {
+                        enabled: !entry.is-header && !entry.blocked;
+                        mouse-cursor: entry.is-header || entry.blocked
+                            ? MouseCursor.default
+                            : MouseCursor.pointer;
+                        clicked => { root.picked(entry.value); }
+                    }
+                }
+            }
+        }
+
+        // Visual scrollbar — track + thumb, drawn on the right edge
+        // when the entries overflow `visible-height`. Read-only for
+        // now (mouse-wheel is the input path; drag would require
+        // another TouchArea and bookkeeping).
+        if root.needs-scrollbar: Rectangle {
+            x: parent.width - 9px;
+            y: 3px;
+            width: 7px;
+            height: parent.height - 6px;
+            background: Palette.bg-cell-alt;
+            border-radius: 3px;
+
+            // Thumb. Height is the proportion of content currently
+            // visible; y tracks the scroll progress along the track.
+            Rectangle {
+                property <length> max-scroll:
+                    root.content-height - root.visible-height;
+                property <length> thumb-height:
+                    parent.height * root.visible-height / root.content-height;
+                property <length> track-travel: parent.height - thumb-height;
+                x: 0;
+                y: root.scroll-y < 0px
+                    ? -root.scroll-y * track-travel / max-scroll
+                    : 0px;
+                width: parent.width;
+                height: thumb-height;
+                background: Palette.text-dim;
+                border-radius: 3px;
+            }
+        }
+    }
+}

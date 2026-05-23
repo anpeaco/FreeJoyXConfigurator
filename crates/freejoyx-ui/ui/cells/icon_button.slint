@@ -1,0 +1,80 @@
+import { Palette } from "../globals/palette.slint";
+import { TooltipState } from "../globals/tooltip.slint";
+import { LucideIcon } from "lucide_icon.slint";
+
+// Small icon-only button used for the Detect / Reset / Set-center
+// cluster on each axis row. Supports a `pressed` visual for
+// toggle-style buttons (Detect). Follows the row-cell rule: 26 px
+// outer, 22 px inner y-centred.
+export component IconButton inherits Rectangle {
+    in property <image> icon-source;
+    in property <bool> pressed: false;
+    in property <bool> enabled: true;
+    in property <string> tooltip: "";
+    callback clicked();
+
+    width: 24px;
+    height: 26px;
+    background: transparent;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    // Two distinct visual states share this component:
+    //  • `armed`  — sticky toggle on (e.g. Detect armed). Accent fill.
+    //  • `held`   — transient mouse-down. Button physically depresses:
+    //               background sinks to bg-pill (darker than hover),
+    //               icon and frame shift 1 px down, top border dims so
+    //               the button reads as inset.
+    // Splitting the two keeps a quick tap legible (the displacement is
+    // visible even after the release fade), and keeps armed-toggle and
+    // tap-feedback distinguishable.
+    property <bool> armed: root.pressed && root.enabled;
+    property <bool> held: ta.pressed && root.enabled;
+
+    inner := Rectangle {
+        width: 24px;
+        height: 22px;
+        // 1 px push-down on press. Centred when idle; shifted +1 px
+        // (i.e. content drops into the frame) when held.
+        y: ((parent.height - self.height) / 2) + (held ? 1px : 0px);
+        animate y { duration: held ? 30ms : 180ms; easing: ease-out; }
+        background: armed
+            ? Palette.accent
+            : (held
+                ? Palette.bg-pill
+                : (ta.has-hover && root.enabled ? Palette.bg-cell-hover : Palette.bg-cell-alt));
+        animate background { duration: held ? 30ms : 180ms; easing: ease-out; }
+        border-color: armed
+            ? Palette.accent
+            : (held ? Palette.text-dim : Palette.border);
+        animate border-color { duration: held ? 30ms : 180ms; easing: ease-out; }
+        border-width: 1px;
+        border-radius: 3px;
+
+        LucideIcon {
+            source: root.icon-source;
+            tint: armed ? Palette.bg-window : (held ? Palette.text-dim : Palette.text);
+            size: 13px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+
+        ta := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+
+    property <bool> hovered: ta.has-hover && root.enabled && root.tooltip != "";
+    changed hovered => {
+        if (hovered) {
+            TooltipState.text = root.tooltip;
+            TooltipState.anchor-x = inner.absolute-position.x;
+            TooltipState.anchor-y = inner.absolute-position.y + inner.height + 4px;
+            TooltipState.visible = true;
+        } else if (TooltipState.text == root.tooltip) {
+            TooltipState.visible = false;
+            TooltipState.text = "";
+        }
+    }
+}

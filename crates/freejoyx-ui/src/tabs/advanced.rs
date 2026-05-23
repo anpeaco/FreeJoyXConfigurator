@@ -11,7 +11,7 @@ use freejoyx_core::wire::DeviceConfig;
 use freejoyx_device::{Command, DeviceCandidate};
 use slint::{ComponentHandle, Model, SharedString, VecModel};
 
-use crate::buttons::mark_dirty;
+use crate::tabs::buttons::mark_dirty;
 use crate::{AdvancedModel, AppWindow, DeviceOption};
 
 /// Build the Slint advanced-tab model from the held config. Called on

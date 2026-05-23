@@ -1,0 +1,205 @@
+import { Palette } from "../globals/palette.slint";
+import { Icons } from "../globals/icons.slint";
+import { ButtonRow } from "../types.slint";
+import { CheckCell } from "../cells/check_cell.slint";
+import { DropdownCell } from "../cells/dropdown_cell.slint";
+import { LucideIcon } from "../cells/lucide_icon.slint";
+import { NumberCell } from "../cells/number_cell.slint";
+import { PillButton } from "../cells/pill_button.slint";
+import { ButtonRowView } from "../rows/button_row_view.slint";
+import { ButtonsHeaderRow } from "../rows/buttons_header_row.slint";
+
+// 128 button slots. Each row carries:
+//
+//   slot # | physical input | type cycle | shift cycle | inverted | disabled | live
+//
+// LOGIC slots reveal a second row for op + source B + debounce timer
+// + validator badge. The per-physical coexistence rule
+// (F103_GESTURE_PLAN.md: only NORMAL/TAP/DOUBLE_TAP may share a
+// physical) is enforced by `physical_assignment_blocked` in
+// freejoyx-core::domain::buttons — if the user tries to step the
+// type cycle to a blocked variant, the cycle skips past it.
+export component ButtonsTab inherits Rectangle {
+    in property <[ButtonRow]> buttons;
+    // Filter state (issue #5) — passed from AppWindow so the Rust side
+    // can mutate freely and the strip below reflects the truth.
+    in property <bool> hide-unused;
+    in property <int> filter-physical;  // -1 when not filtering
+    in property <string> filter-category-label;  // "All" when not filtering
+    in property <int> visible-count;
+    /// "Press to filter" arm — see AppWindow.buttons-filter-arm.
+    in property <bool> filter-arm: false;
+    /// Scroll target after a press-to-filter capture. Rust bumps
+    /// `jump-tick` once the filter has been re-narrowed so the
+    /// matching rows land at the top of the list.
+    in property <length> jump-y: 0px;
+    in property <int> jump-tick: 0;
+    /// Encoder→Buttons jump highlight. Set by Rust when the user clicks
+    /// the "→ buttons" arrow on an encoder row; the two paired button
+    /// slots flash. -1 = no flash.
+    in property <int> flash-slot-a: -1;
+    in property <int> flash-slot-b: -1;
+    callback physical-edited(int, int);
+    callback physical-armed-changed(int, bool);
+    callback inverted-toggled(int);
+    callback disabled-toggled(int);
+    callback src-b-edited(int, int);
+    callback src-b-armed-changed(int, bool);
+    callback hide-unused-toggled();
+    callback filter-physical-edited(int);
+    callback filter-physical-cleared();
+    callback filter-arm-toggled();
+    callback dropdown-requested(int, int, length, length, length);
+    callback add-button-clicked();
+
+    // Press-to-filter scrolls the captured row(s) into view. Mirrors
+    // the axes-tab pattern: Rust sets `jump-y`, then bumps `jump-tick`
+    // to fire this handler.
+    changed jump-tick => { fl.viewport-y = -root.jump-y; }
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+        alignment: start;
+
+        Text {
+            text: "Buttons";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "128 button slots. Click the Type cell to pick from category groups; blocked types are greyed with the conflicting slot's name. LOGIC rows expose op / Source B / debounce in a sub-row under the Type column. Amber dot = physical pressed; green dot = logical state.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        // Filter strip (issue #5). 36 px bar height matches the tab
+        // strip + gives PillButton (30 px) and the 26 px cells matching
+        // breathing room. Every child carries an explicit y so the
+        // mix of 22/26/30-pixel-tall cells sit on a common baseline —
+        // `HorizontalLayout` doesn't auto-vertical-centre.
+        Rectangle {
+            height: 36px;
+            background: Palette.bg-cell;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 4px;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 10px;
+                alignment: start;
+                LucideIcon {
+                    source: Icons.filter;
+                    tint: Palette.text-dim;
+                    size: 14px;
+                    y: (parent.height - self.height) / 2;
+                }
+                CheckCell {
+                    label: "Hide unused";
+                    checked: root.hide-unused;
+                    y: (parent.height - self.height) / 2;
+                    toggled => { root.hide-unused-toggled(); }
+                }
+                NumberCell {
+                    label: "Physical";
+                    value: root.filter-physical;
+                    field-width: 56px;
+                    y: (parent.height - self.height) / 2;
+                    edited(v) => { root.filter-physical-edited(v); }
+                }
+                // Press-to-filter arm. When checked, every observed
+                // physical button press re-narrows the Physical filter
+                // to that input and scrolls the row into view. Stays
+                // armed until the user toggles it off, switches tabs,
+                // or clicks a per-row Physical cell.
+                CheckCell {
+                    label: root.filter-arm ? "Listening — applying filter on press" : "Press to filter";
+                    checked: root.filter-arm;
+                    y: (parent.height - self.height) / 2;
+                    toggled => { root.filter-arm-toggled(); }
+                }
+                if root.filter-physical >= 0: Rectangle {
+                    width: 22px;
+                    height: 22px;
+                    y: (parent.height - self.height) / 2;
+                    background: clr-ta.has-hover ? Palette.bg-cell-hover : transparent;
+                    border-radius: 3px;
+                    LucideIcon {
+                        source: Icons.close;
+                        tint: Palette.text-dim;
+                        size: 12px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    clr-ta := TouchArea {
+                        clicked => { root.filter-physical-cleared(); }
+                    }
+                }
+                Text {
+                    text: "Type";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    y: (parent.height - self.height) / 2;
+                }
+                DropdownCell {
+                    compact: true;
+                    value-label: root.filter-category-label;
+                    value-width: 116px;
+                    kind: 5;  // DropdownKind::ButtonsFilterCategory
+                    slot: -1;
+                    popup-width: 160px;
+                    y: (parent.height - self.height) / 2;
+                    clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: root.visible-count + " / 128";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    y: (parent.height - self.height) / 2;
+                }
+                PillButton {
+                    label: "Add button";
+                    icon-source: Icons.add;
+                    y: (parent.height - self.height) / 2;
+                    clicked => { root.add-button-clicked(); }
+                }
+            }
+        }
+
+        ButtonsHeaderRow { }
+
+        fl := Flickable {
+            vertical-stretch: 1;
+            // 38 px for a plain row, 72 px when the LOGIC sub-row is visible.
+            // Pre-compute a conservative bound rather than a per-row sum:
+            // 128 × 72 = 9216 px will always cover, regardless of LOGIC mix.
+            viewport-height: buttons.length * 38px;
+            VerticalLayout {
+                spacing: 2px;
+                for btn-data[i] in root.buttons: ButtonRowView {
+                    entry: btn-data;
+                    slot: btn-data.slot;
+                    flash-slot-a: root.flash-slot-a;
+                    flash-slot-b: root.flash-slot-b;
+                    physical-edited(s, v) => { root.physical-edited(s, v); }
+                    physical-armed-changed(s, a) => { root.physical-armed-changed(s, a); }
+                    inverted-toggled(s) => { root.inverted-toggled(s); }
+                    disabled-toggled(s) => { root.disabled-toggled(s); }
+                    src-b-edited(s, v) => { root.src-b-edited(s, v); }
+                    src-b-armed-changed(s, a) => { root.src-b-armed-changed(s, a); }
+                    dropdown-requested(k, s, x, y, w) => {
+                        root.dropdown-requested(k, s, x, y, w);
+                    }
+                }
+            }
+        }
+    }
+}

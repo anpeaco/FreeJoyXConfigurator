@@ -25,12 +25,13 @@
 
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use freejoyx_core::wire::{DeviceConfig, ParamsReport};
 use tracing::{debug, info, warn};
 
-use crate::transport::{enumerate, Device, DeviceCandidate};
+use crate::subscription::{ParamsSubscription, RenewalOutcome, RenewalReason};
+use crate::transport::{enumerate, Device, DeviceCandidate, Transport};
 use crate::TransportError;
 
 /// How often the worker re-enumerates while no device is open. Matches
@@ -40,11 +41,6 @@ const DISCOVERY_POLL: Duration = Duration::from_millis(600);
 /// Per-read timeout while a device is connected. Short so the worker
 /// can poll its command channel between reads.
 const READ_TIMEOUT: Duration = Duration::from_millis(200);
-
-/// Cadence for refreshing the firmware's params subscription. The
-/// firmware stops pushing params reports if it doesn't see a renewal
-/// within ~5 seconds. Matches `hiddevice.cpp:360` (the 5000 ms timer).
-const PARAMS_REQUEST_REFRESH: Duration = Duration::from_secs(5);
 
 /// Commands the UI sends to the worker.
 #[derive(Debug)]
@@ -260,13 +256,16 @@ fn run_worker(
 
         // Kick the firmware to start pushing params. Without this the
         // read loop sits idle even though the device is open.
-        if let Err(e) = device.request_params() {
-            emit_error(evt_tx, format!("params subscribe failed: {e}"));
-            let _ = evt_tx.send(DeviceEvent::Disconnected);
-            continue;
-        }
+        let mut subscription = match ParamsSubscription::subscribe(Instant::now(), &mut device) {
+            Ok(s) => s,
+            Err(e) => {
+                emit_error(evt_tx, format!("params subscribe failed: {e}"));
+                let _ = evt_tx.send(DeviceEvent::Disconnected);
+                continue;
+            }
+        };
 
-        match pump_until_disconnect(&mut device, cmd_rx, evt_tx) {
+        match pump_until_disconnect(&mut device, &mut subscription, cmd_rx, evt_tx) {
             PumpOutcome::Shutdown => return,
             PumpOutcome::Disconnected => {
                 let _ = evt_tx.send(DeviceEvent::Disconnected);
@@ -282,6 +281,7 @@ fn run_worker(
 }
 
 /// Outcome of the pumping loop.
+#[derive(Debug)]
 enum PumpOutcome {
     /// Shutdown was requested; the worker should exit entirely.
     Shutdown,
@@ -306,14 +306,18 @@ enum IdleAction {
 /// Read loop while a device is open. Interleaves params reads with
 /// command dispatch so [`Command::ReadConfig`] / [`Command::WriteConfig`]
 /// can be serviced without dropping the params subscription.
+///
+/// Takes `device: &mut dyn Transport` (not `&mut Device`) so the pump's
+/// behaviour can be tested against a scriptable fake — see the
+/// `pump_tests` module at the bottom of this file.
 fn pump_until_disconnect(
-    device: &mut Device,
+    device: &mut dyn Transport,
+    subscription: &mut ParamsSubscription,
     cmd_rx: &mpsc::Receiver<Command>,
     evt_tx: &mpsc::Sender<DeviceEvent>,
 ) -> PumpOutcome {
-    let mut next_refresh = std::time::Instant::now() + PARAMS_REQUEST_REFRESH;
     loop {
-        match dispatch_pending_commands(device, cmd_rx, evt_tx) {
+        match dispatch_pending_commands(device, subscription, cmd_rx, evt_tx) {
             CommandLoopResult::Continue => {}
             CommandLoopResult::Shutdown => return PumpOutcome::Shutdown,
             CommandLoopResult::Disconnect => return PumpOutcome::Disconnected,
@@ -321,12 +325,11 @@ fn pump_until_disconnect(
                 return PumpOutcome::ReopenRequested(new_filter)
             }
         }
-        if std::time::Instant::now() >= next_refresh {
-            if let Err(e) = device.request_params() {
-                warn!("params refresh failed, treating as disconnect: {e}");
-                return PumpOutcome::Disconnected;
-            }
-            next_refresh = std::time::Instant::now() + PARAMS_REQUEST_REFRESH;
+        if let RenewalOutcome::Lost(e) =
+            subscription.renew(Instant::now(), RenewalReason::Periodic, device)
+        {
+            warn!("params refresh failed, treating as disconnect: {e}");
+            return PumpOutcome::Disconnected;
         }
         match device.read_params_blocking(READ_TIMEOUT) {
             Ok(report) => {
@@ -364,7 +367,8 @@ enum CommandLoopResult {
 /// pause params reading for their duration; on success the worker
 /// re-subscribes so params resume cleanly.
 fn dispatch_pending_commands(
-    device: &mut Device,
+    device: &mut dyn Transport,
+    subscription: &mut ParamsSubscription,
     cmd_rx: &mpsc::Receiver<Command>,
     evt_tx: &mpsc::Sender<DeviceEvent>,
 ) -> CommandLoopResult {
@@ -374,7 +378,9 @@ fn dispatch_pending_commands(
             Ok(Command::ReadConfig) => match device.read_config() {
                 Ok(cfg) => {
                     let _ = evt_tx.send(DeviceEvent::ConfigReceived(cfg));
-                    if let Err(e) = device.request_params() {
+                    if let RenewalOutcome::Lost(e) =
+                        subscription.renew(Instant::now(), RenewalReason::AfterRead, device)
+                    {
                         warn!("re-subscribe after read_config failed: {e}");
                         return CommandLoopResult::Disconnect;
                     }
@@ -390,12 +396,11 @@ fn dispatch_pending_commands(
                 Ok(()) => {
                     let _ = evt_tx.send(DeviceEvent::ConfigSent);
                     // Device often re-enumerates after a write; the
-                    // next read or refresh will catch it. Re-subscribe
-                    // optimistically.
-                    if let Err(e) = device.request_params() {
-                        debug!("re-subscribe after write_config failed (expected on re-enum): {e}");
-                        return CommandLoopResult::Disconnect;
-                    }
+                    // subscription module swallows the expected
+                    // renewal failure and the next periodic tick
+                    // retries if the device is still present.
+                    let _ =
+                        subscription.renew(Instant::now(), RenewalReason::AfterWrite, device);
                 }
                 Err(e) => {
                     let _ = evt_tx.send(DeviceEvent::ConfigError(format!("write: {e}")));
@@ -559,5 +564,254 @@ mod tests {
         // If the worker leaked, this test would hang under cargo test's
         // default timeout. No explicit assertion — clean exit is the
         // success criterion.
+    }
+}
+
+#[cfg(test)]
+mod pump_tests {
+    //! Tests for the pump loop in isolation from `hidapi`. Drives
+    //! `pump_until_disconnect` against a scriptable
+    //! [`super::Transport`] fake — verifies command interleaving,
+    //! disconnect handling, and the ReadConfig / WriteConfig
+    //! round-trip without a real device.
+    //!
+    //! What's *not* covered here: device enumeration + `Device::open`.
+    //! Those still need a real `hidapi` context; if testing reconnect
+    //! becomes important later we add a `trait DeviceFactory` as a
+    //! second-layer seam. For now the open-device-and-pump half is the
+    //! testable surface.
+    use super::*;
+    use crate::transport::Transport;
+    use freejoyx_core::wire::config::DEV_CONFIG_SIZE;
+    use freejoyx_core::wire::params::PARAMS_REPORT_SIZE;
+    use freejoyx_core::wire::DeviceConfig;
+    use std::sync::Mutex;
+
+    /// One scripted reply the fake will deliver on the *next*
+    /// `read_params_blocking` call. The fake walks this queue in order;
+    /// once empty, calls block out to a `Timeout`.
+    enum NextRead {
+        /// Hand back this params report on the next read.
+        Params(ParamsReport),
+        /// Return `TransportError::Timeout` — caller should treat as
+        /// idle, not disconnect.
+        Timeout,
+        /// Return a `TransportError::Read` — caller should treat as
+        /// disconnect.
+        Disconnect,
+    }
+
+    /// Scriptable [`Transport`] for pump tests. Records every method
+    /// call in `events` so assertions can pin call ordering, and
+    /// delivers `read_params_blocking` results from `pending_reads`
+    /// in FIFO order.
+    #[derive(Default)]
+    struct FakeTransport {
+        pending_reads: Mutex<std::collections::VecDeque<NextRead>>,
+        events: Mutex<Vec<FakeCall>>,
+        read_config_result: Mutex<Option<Result<Box<DeviceConfig>, TransportError>>>,
+        write_config_result: Mutex<Option<Result<(), TransportError>>>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum FakeCall {
+        RequestParams,
+        ReadParams,
+        ReadConfig,
+        WriteConfig,
+    }
+
+    impl FakeTransport {
+        fn push_read(&self, r: NextRead) {
+            self.pending_reads.lock().unwrap().push_back(r);
+        }
+        fn set_read_config(&self, r: Result<Box<DeviceConfig>, TransportError>) {
+            *self.read_config_result.lock().unwrap() = Some(r);
+        }
+        fn set_write_config(&self, r: Result<(), TransportError>) {
+            *self.write_config_result.lock().unwrap() = Some(r);
+        }
+        fn events(&self) -> Vec<FakeCall> {
+            std::mem::take(&mut *self.events.lock().unwrap())
+        }
+    }
+
+    impl Transport for FakeTransport {
+        fn request_params(&self) -> Result<(), TransportError> {
+            self.events.lock().unwrap().push(FakeCall::RequestParams);
+            Ok(())
+        }
+        fn read_params_blocking(
+            &mut self,
+            _timeout: Duration,
+        ) -> Result<ParamsReport, TransportError> {
+            self.events.lock().unwrap().push(FakeCall::ReadParams);
+            match self.pending_reads.lock().unwrap().pop_front() {
+                Some(NextRead::Params(p)) => Ok(p),
+                Some(NextRead::Timeout) | None => Err(TransportError::Timeout { ms: 0 }),
+                Some(NextRead::Disconnect) => Err(TransportError::Read(
+                    hidapi::HidError::HidApiError {
+                        message: "fake disconnect".into(),
+                    },
+                )),
+            }
+        }
+        fn read_config(&self) -> Result<Box<DeviceConfig>, TransportError> {
+            self.events.lock().unwrap().push(FakeCall::ReadConfig);
+            self.read_config_result
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or_else(|| Ok(Box::new(empty_config())))
+        }
+        fn write_config(&self, _cfg: &DeviceConfig) -> Result<(), TransportError> {
+            self.events.lock().unwrap().push(FakeCall::WriteConfig);
+            self.write_config_result.lock().unwrap().take().unwrap_or(Ok(()))
+        }
+    }
+
+    fn empty_config() -> DeviceConfig {
+        DeviceConfig::decode(&[0u8; DEV_CONFIG_SIZE]).unwrap()
+    }
+
+    fn empty_params() -> ParamsReport {
+        ParamsReport::decode(&[0u8; PARAMS_REPORT_SIZE]).unwrap()
+    }
+
+    /// Drive `pump_until_disconnect` in a background thread so the
+    /// test can feed it commands and reads. Returns the worker thread's
+    /// JoinHandle (carrying the `PumpOutcome`) plus the cmd sender and
+    /// evt receiver.
+    fn spawn_pump(
+        mut fake: FakeTransport,
+    ) -> (
+        std::thread::JoinHandle<PumpOutcome>,
+        mpsc::Sender<Command>,
+        mpsc::Receiver<DeviceEvent>,
+    ) {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (evt_tx, evt_rx) = mpsc::channel();
+        let join = std::thread::spawn(move || {
+            let mut sub =
+                ParamsSubscription::subscribe(Instant::now(), &mut fake).expect("fake subscribe");
+            pump_until_disconnect(&mut fake, &mut sub, &cmd_rx, &evt_tx)
+        });
+        (join, cmd_tx, evt_rx)
+    }
+
+    /// Drain events received within `dur`. Returns once the channel
+    /// goes quiet or the deadline passes. Used to assert "we got these
+    /// events" without timing-dependent sleeps.
+    fn drain_events(rx: &mpsc::Receiver<DeviceEvent>, dur: Duration) -> Vec<DeviceEvent> {
+        let mut out = Vec::new();
+        let deadline = std::time::Instant::now() + dur;
+        while let Ok(e) = rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            out.push(e);
+        }
+        out
+    }
+
+    #[test]
+    fn shutdown_command_exits_pump() {
+        let fake = FakeTransport::default();
+        let (join, cmd_tx, _evt) = spawn_pump(fake);
+        cmd_tx.send(Command::Shutdown).unwrap();
+        let outcome = join.join().expect("pump panicked");
+        assert!(matches!(outcome, PumpOutcome::Shutdown));
+    }
+
+    #[test]
+    fn params_read_emits_tick_event() {
+        let fake = FakeTransport::default();
+        fake.push_read(NextRead::Params(empty_params()));
+        let (join, cmd_tx, evt_rx) = spawn_pump(fake);
+
+        let events = drain_events(&evt_rx, Duration::from_millis(200));
+        cmd_tx.send(Command::Shutdown).unwrap();
+        join.join().unwrap();
+
+        assert!(events.iter().any(|e| matches!(e, DeviceEvent::ParamsTick(_))));
+    }
+
+    #[test]
+    fn read_failure_treated_as_disconnect() {
+        let fake = FakeTransport::default();
+        fake.push_read(NextRead::Disconnect);
+        let (join, _cmd_tx, evt_rx) = spawn_pump(fake);
+        let outcome = join.join().expect("pump panicked");
+        assert!(matches!(outcome, PumpOutcome::Disconnected));
+        // Drop the event sender side via the receiver going out of scope
+        // is fine — we don't assert on emitted events here.
+        let _ = evt_rx;
+    }
+
+    #[test]
+    fn read_config_command_roundtrips() {
+        let fake = FakeTransport::default();
+        fake.set_read_config(Ok(Box::new(empty_config())));
+        let (join, cmd_tx, evt_rx) = spawn_pump(fake);
+
+        cmd_tx.send(Command::ReadConfig).unwrap();
+        let events = drain_events(&evt_rx, Duration::from_millis(300));
+        cmd_tx.send(Command::Shutdown).unwrap();
+        join.join().unwrap();
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DeviceEvent::ConfigReceived(_))),
+            "expected ConfigReceived; got {events:?}",
+        );
+    }
+
+    #[test]
+    fn write_config_command_roundtrips() {
+        let fake = FakeTransport::default();
+        fake.set_write_config(Ok(()));
+        let (join, cmd_tx, evt_rx) = spawn_pump(fake);
+
+        cmd_tx
+            .send(Command::WriteConfig(Box::new(empty_config())))
+            .unwrap();
+        let events = drain_events(&evt_rx, Duration::from_millis(300));
+        cmd_tx.send(Command::Shutdown).unwrap();
+        join.join().unwrap();
+
+        assert!(events.iter().any(|e| matches!(e, DeviceEvent::ConfigSent)));
+    }
+
+    #[test]
+    fn config_read_failure_surfaces_as_config_error() {
+        let fake = FakeTransport::default();
+        fake.set_read_config(Err(TransportError::Timeout { ms: 5000 }));
+        let (join, cmd_tx, evt_rx) = spawn_pump(fake);
+
+        cmd_tx.send(Command::ReadConfig).unwrap();
+        let events = drain_events(&evt_rx, Duration::from_millis(300));
+        cmd_tx.send(Command::Shutdown).unwrap();
+        join.join().unwrap();
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DeviceEvent::ConfigError(msg) if msg.contains("read:"))),
+            "expected ConfigError(read: ...); got {events:?}",
+        );
+    }
+
+    #[test]
+    fn reopen_command_returns_reopen_outcome() {
+        let fake = FakeTransport::default();
+        let (join, cmd_tx, _evt) = spawn_pump(fake);
+        cmd_tx
+            .send(Command::Reopen {
+                serial: Some("ABC123".into()),
+            })
+            .unwrap();
+        let outcome = join.join().expect("pump panicked");
+        match outcome {
+            PumpOutcome::ReopenRequested(Some(s)) => assert_eq!(s, "ABC123"),
+            other => panic!("expected ReopenRequested(Some); got {other:?}"),
+        }
     }
 }

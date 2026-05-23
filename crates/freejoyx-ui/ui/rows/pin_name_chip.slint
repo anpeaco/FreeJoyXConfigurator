@@ -1,0 +1,65 @@
+import { Palette } from "../globals/palette.slint";
+import { PinRow } from "../types.slint";
+
+// Family-coloured backdrop for the silkscreen name chip. Each
+// `PinFunctionFamily` (icon set on the right side of `function-family`)
+// gets a muted tint so the eye can pick out groups (axes, buses,
+// sensors, …) at a glance. Locked holes stay grey.
+//
+// Layout note: outer host is 26 px to match the `DropdownCell` row
+// height, with the 22 px coloured chip y-centred inside. Direct
+// `y:`-centring on a HorizontalLayout child gets overridden by the
+// layout, so the wrapper is what keeps the chip vertically aligned
+// with the function picker pill across the row.
+export component PinNameChip inherits Rectangle {
+    in property <PinRow> entry;
+
+    width: 46px;
+    height: 26px;
+    background: transparent;
+
+    chip := Rectangle {
+        width: 46px;
+        height: 22px;
+        y: (parent.height - self.height) / 2;
+        // Keep the border on locked silk chips so they read as
+        // labelled holes; the muted opacity below + the
+        // grey-on-grey palette pulls them visually behind the
+        // configurable rows without losing the row outline.
+        border-color: root.entry.conflict-msg != ""
+            ? Palette.error
+            : Palette.border;
+        border-width: root.entry.conflict-msg != "" ? 2px : 1px;
+        border-radius: 3px;
+        opacity: root.entry.is-locked ? 0.75 : 1.0;
+        background:
+            root.entry.is-locked                    ? Palette.bg-cell-alt :
+            root.entry.function-family == 0         ? Palette.bg-cell     :
+            // Family tints — muted enough to read as accents on the dark
+            // panel, distinct enough that a quick visual scan groups
+            // pins by role.
+            root.entry.function-family == 1 /*Button*/   ? #3b4d6b :
+            root.entry.function-family == 2 /*Axis*/     ? #3b6b48 :
+            root.entry.function-family == 3 /*Encoder*/  ? #5a3b6b :
+            root.entry.function-family == 4 /*Bus*/      ? #6b5a3b :
+            root.entry.function-family == 5 /*Sensor*/   ? #6b3b3b :
+            root.entry.function-family == 6 /*ShiftReg*/ ? #3b6b6b :
+            root.entry.function-family == 7 /*LED*/      ? #6b3b5a :
+            root.entry.function-family == 8 /*RgbLED*/   ? #3b5a6b :
+            Palette.bg-cell;
+
+        Text {
+            text: root.entry.pin-name;
+            color: root.entry.is-locked
+                ? Palette.text-dim
+                : (root.entry.function-family == 0 ? Palette.text : #ffffff);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            height: parent.height;
+        }
+    }
+}

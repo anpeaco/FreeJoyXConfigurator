@@ -79,7 +79,9 @@ written against:
 
 ### Wire-format constants the Rust port locks to
 
-- `FIRMWARE_VERSION = 0x0010` (FreeJoyX gen 1; mask group `& 0xFFF0`)
+- `FIRMWARE_VERSION = 0x0020` (FreeJoyX gen 2; mask group `& 0xFFF0`).
+  Bumped from gen 1 (`0x0010`) for the LONG_PRESS → TAP semantic
+  rename; `dev_config_t` byte layout is unchanged.
 - `FREEJOY_DEV_CONFIG_SIZE = 1580` bytes — transmitted as 26 × 62-byte
   HID fragments via `REPORT_ID_CONFIG_OUT`
 - `FREEJOY_PARAMS_REPORT_SIZE = 72` bytes — params/state report, ID = 2
@@ -428,7 +430,7 @@ When the next Claude Code session opens this directory:
 | Codec scope | Full 1580-byte `dev_config_t` round-trip, including LED/sensor bytes the v0.1 UI doesn't surface |
 | LOGIC evaluator | **Not implemented** in configurator — the firmware evaluates; configurator only validates config completeness |
 | Async runtime | `std::sync::mpsc` + plain thread (no `tokio`) |
-| Wire-format target | `FIRMWARE_VERSION = 0x0010`, mask group `& 0xFFF0` |
+| Wire-format target | `FIRMWARE_VERSION = 0x0020`, mask group `& 0xFFF0` |
 | Unknown firmware versions | Refuse with a clear toast pointing at the Qt app — no legacy migration in Rust |
 | CI runners | Free GitHub Actions: `ubuntu-latest`, `windows-latest`, `macos-latest` |
 | UI style | Per `Style.MD` (DCSBoards-derived dark cockpit palette, amber accent) |

@@ -1,0 +1,60 @@
+import { Palette } from "../globals/palette.slint";
+import { Icons } from "../globals/icons.slint";
+import { LucideIcon } from "lucide_icon.slint";
+
+export component PillButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <image> icon-source;
+    in property <bool> show-chevron: false;
+    callback clicked();
+
+    property <bool> held: ta.pressed && root.enabled;
+
+    height: 30px;
+    min-width: 110px;
+    background: held
+        ? Palette.bg-cell-alt
+        : (ta.has-hover ? Palette.bg-pill-hover : Palette.bg-pill);
+    animate background { duration: held ? 30ms : 180ms; easing: ease-out; }
+    border-color: held ? Palette.text-dim : Palette.border;
+    animate border-color { duration: held ? 30ms : 180ms; easing: ease-out; }
+    border-width: 1px;
+    border-radius: 4px;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    inner-layout := HorizontalLayout {
+        alignment: center;
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 6px;
+        // 1 px push-down on press; the whole label/icon row shifts so
+        // the button reads as physically depressed.
+        y: held ? 1px : 0;
+        animate y { duration: held ? 30ms : 180ms; easing: ease-out; }
+        LucideIcon {
+            source: root.icon-source;
+            tint: held ? Palette.text-dim : Palette.text;
+            visible: root.icon-source.width > 0;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            color: held ? Palette.text-dim : Palette.text;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+        LucideIcon {
+            source: Icons.chevron-down;
+            tint: Palette.text-dim;
+            size: 12px;
+            visible: root.show-chevron;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}

@@ -1,0 +1,113 @@
+import { Palette } from "../globals/palette.slint";
+import { PinRow } from "../types.slint";
+import { PinRowStrip } from "../rows/pin_row_strip.slint";
+
+// Three-column layout matching the Qt configurator: two stacks of 20
+// row-strips (function picker + name chip) flanking a central board
+// image area. The board area is a single tall element that spans the
+// height of both side stacks — ready for a real PNG/SVG asset
+// (issue #9); for now it shows a placeholder. The whole block is
+// top-aligned in the tab body so the header text doesn't push the
+// chips down.
+export component PinsTab inherits Rectangle {
+    in property <[PinRow]> pins;
+    /// Wire slot of the pin currently highlighted by a "jump back from
+    /// Axes / Shift Registers" request. -1 = no flash.
+    in property <int> flash-slot: -1;
+    callback dropdown-requested(int /* kind */, int /* slot */, length /* abs-x */, length /* abs-y */, length /* width */);
+    callback jump-clicked(int /* wire-slot */);
+
+    background: Palette.bg-panel;
+
+    property <length> func-width: 150px;
+    // 26 px matches the `DropdownCell`'s own height — anything
+    // shorter and the pill overflows the row strip.
+    property <length> row-height: 26px;
+    property <length> row-spacing: 1px;
+    property <length> stack-height: 20 * root.row-height + 19 * root.row-spacing;
+
+    // `alignment: start` packs children at the top edge instead of
+    // Slint's default `stretch`, which spreads them down the panel
+    // when there's leftover height.
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        alignment: start;
+
+        Text {
+            text: "Pins";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Click a function pill to assign a role. Locked holes (GND / 3V3 / RST / VBUS / USB / 5V / BOOT0) show their fixed role greyed; chip colour groups pins by family.";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: center;
+
+            // -- Left column: rows 0..19 --
+            VerticalLayout {
+                spacing: root.row-spacing;
+                alignment: start;
+                height: root.stack-height;
+                for r in 20: PinRowStrip {
+                    entry: root.pins[r];
+                    func-width: root.func-width;
+                    right-side: false;
+                    height: root.row-height;
+                    flash-slot: root.flash-slot;
+                    dropdown-requested(k, s, x, y, w) => {
+                        root.dropdown-requested(k, s, x, y, w);
+                    }
+                    jump-clicked(s) => { root.jump-clicked(s); }
+                }
+            }
+
+            // -- Centre: board image placeholder, single tall
+            //    rectangle spanning all 20 rows. When an SVG / PNG
+            //    asset lands (issue #9), drop an Image here.
+            board-image := Rectangle {
+                width: 280px;
+                height: root.stack-height;
+                background: Palette.bg-cell;
+                border-color: Palette.border;
+                border-width: 1px;
+                border-radius: 6px;
+                Text {
+                    text: "board image";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    letter-spacing: 0.5px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+
+            // -- Right column: rows 20..39 --
+            VerticalLayout {
+                spacing: root.row-spacing;
+                alignment: start;
+                height: root.stack-height;
+                for r in 20: PinRowStrip {
+                    entry: root.pins[r + 20];
+                    func-width: root.func-width;
+                    right-side: true;
+                    height: root.row-height;
+                    flash-slot: root.flash-slot;
+                    dropdown-requested(k, s, x, y, w) => {
+                        root.dropdown-requested(k, s, x, y, w);
+                    }
+                    jump-clicked(s) => { root.jump-clicked(s); }
+                }
+            }
+        }
+    }
+}

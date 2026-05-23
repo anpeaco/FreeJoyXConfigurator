@@ -1,0 +1,140 @@
+import { Palette } from "../globals/palette.slint";
+import { ShiftRegRow } from "../types.slint";
+import { BackJumpButton } from "../cells/back_jump_button.slint";
+import { DropdownCell } from "../cells/dropdown_cell.slint";
+import { SpinCell } from "../cells/spin_cell.slint";
+
+export component ShiftRegsTab inherits Rectangle {
+    in property <[ShiftRegRow]> registers;
+    /// Pin-jump target slot. Set by Rust when a ShiftReg pin's jump
+    /// button is clicked; cleared after the flash timeout.
+    in property <int> flash-slot: -1;
+    callback count-edited(int, int);
+    callback chip-size-edited(int, int);
+    callback chip-count-edited(int, int);
+    callback dropdown-requested(int, int, length, length, length);
+    callback back-to-pin-clicked(int /* sr slot */);
+
+    background: Palette.bg-panel;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text {
+            text: "Shift Registers";
+            color: Palette.accent;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Up to four daisy-chained HC165 or CD4021 shift registers. Latch / data / clock pins are assigned via the Pins tab (ShiftRegLatch / ShiftRegData / ShiftRegClk).";
+            color: Palette.text-dim;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+
+        for reg-data[i] in root.registers: Rectangle {
+            property <bool> flashing: root.flash-slot == i;
+            height: 36px;
+            background: flashing ? Palette.accent : Palette.bg-cell;
+            border-color: flashing ? Palette.accent : Palette.border;
+            border-width: flashing ? 2px : 1px;
+            border-radius: 4px;
+            animate background { duration: 250ms; easing: ease-in-out; }
+            animate border-color { duration: 250ms; easing: ease-in-out; }
+            // Single flat HorizontalLayout so every child sits on the
+            // same horizontal axis. Each child carries an explicit
+            // `y: (parent.height - self.height) / 2;` so 22 / 26 /
+            // text-natural-height controls all share the same vertical
+            // center — matches the pattern used by the Buttons-tab
+            // filter strip.
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                alignment: start;
+                Text {
+                    text: reg-data.label;
+                    color: Palette.text;
+                    font-size: 12px;
+                    width: 60px;
+                    vertical-alignment: center;
+                    y: (parent.height - self.height) / 2;
+                }
+                BackJumpButton {
+                    enabled: reg-data.back-to-pin-enabled;
+                    tooltip: "Jump to data pin on the Pins tab";
+                    y: (parent.height - self.height) / 2;
+                    clicked => { root.back-to-pin-clicked(i); }
+                }
+                Text {
+                    text: "type";
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    y: (parent.height - self.height) / 2;
+                }
+                DropdownCell {
+                    compact: true;
+                    value-label: reg-data.type-label;
+                    value-width: 140px;
+                    kind: 11;  // DropdownKind::ShiftRegType
+                    slot: i;
+                    popup-width: 200px;
+                    y: (parent.height - self.height) / 2;
+                    clicked(k, s, x, y, w) => { root.dropdown-requested(k, s, x, y, w); }
+                }
+                // Per-chip × chips = buttons. Editing any of the three
+                // updates the other two (chip-size + chip-count rebuild
+                // total; total snaps up to the next multiple of bpc and
+                // adjusts chip-count). Rust owns the snap arithmetic so
+                // both single-step (+/-) and direct typing land in the
+                // same code path.
+                SpinCell {
+                    label: "per chip";
+                    value: reg-data.buttons-per-chip;
+                    field-width: 36px;
+                    min-value: 1;
+                    max-value: 32;
+                    y: (parent.height - self.height) / 2;
+                    edited(v) => { root.chip-size-edited(i, v); }
+                }
+                Text {
+                    text: "×";
+                    color: Palette.text-dim;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    y: (parent.height - self.height) / 2;
+                }
+                SpinCell {
+                    label: "chips";
+                    value: reg-data.num-chips;
+                    field-width: 36px;
+                    min-value: 0;
+                    max-value: 32;
+                    y: (parent.height - self.height) / 2;
+                    edited(v) => { root.chip-count-edited(i, v); }
+                }
+                Text {
+                    text: "=";
+                    color: Palette.text-dim;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    y: (parent.height - self.height) / 2;
+                }
+                SpinCell {
+                    label: "buttons";
+                    value: reg-data.button-count;
+                    field-width: 44px;
+                    min-value: 0;
+                    y: (parent.height - self.height) / 2;
+                    edited(v) => { root.count-edited(i, v); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+    }
+}

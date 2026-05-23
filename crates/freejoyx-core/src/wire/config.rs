@@ -182,6 +182,10 @@ impl AxisConfig {
     pub fn function(&self) -> u8 {
         (self.flags1 >> 3) & 0x03
     }
+    /// Set the `function` 2-bit field. Values > 3 are clamped.
+    pub fn set_function(&mut self, v: u8) {
+        set_bits(&mut self.flags1, 3, 0x03, v);
+    }
     /// `filter` 3-bit field (FILTER_NO..FILTER_LEVEL_7).
     #[must_use]
     pub fn filter(&self) -> u8 {
@@ -225,6 +229,72 @@ impl AxisConfig {
     }
     pub fn set_is_dynamic_deadband(&mut self, v: bool) {
         set_bit(&mut self.flags3, 0x80, v);
+    }
+
+    // -- accessors over flags4 --
+    /// `source_secondary` 3-bit field. Indexes another axis (0..7) for
+    /// the Function operator; only meaningful when `function() != 0`.
+    #[must_use]
+    pub fn source_secondary(&self) -> u8 {
+        self.flags4 & 0x07
+    }
+    /// Set the `source_secondary` 3-bit field. Values > 7 are clamped.
+    pub fn set_source_secondary(&mut self, v: u8) {
+        set_bits(&mut self.flags4, 0, 0x07, v);
+    }
+    /// `offset_angle` 5-bit field. Raw units; display value =
+    /// `offset_angle * 15` degrees (matches Qt's `Converter`).
+    #[must_use]
+    pub fn offset_angle(&self) -> u8 {
+        (self.flags4 >> 3) & 0x1f
+    }
+    /// Set the `offset_angle` 5-bit field. Values > 31 are clamped.
+    pub fn set_offset_angle(&mut self, v: u8) {
+        set_bits(&mut self.flags4, 3, 0x1f, v);
+    }
+
+    // -- accessors over flags5 --
+    /// `button1_type` 3-bit field. Indexes into `AxisButtonAction`.
+    #[must_use]
+    pub fn button1_type(&self) -> u8 {
+        self.flags5 & 0x07
+    }
+    /// Set the `button1_type` 3-bit field. Values > 7 are clamped.
+    pub fn set_button1_type(&mut self, v: u8) {
+        set_bits(&mut self.flags5, 0, 0x07, v);
+    }
+    /// `button2_type` **2-bit** field — slot 2 cannot hold DOWN / UP
+    /// (the firmware enum has 6 values; this slot only encodes 0..3).
+    #[must_use]
+    pub fn button2_type(&self) -> u8 {
+        (self.flags5 >> 3) & 0x03
+    }
+    pub fn set_button2_type(&mut self, v: u8) {
+        set_bits(&mut self.flags5, 3, 0x03, v);
+    }
+    /// `button3_type` 3-bit field. Same enum as `button1_type`.
+    #[must_use]
+    pub fn button3_type(&self) -> u8 {
+        (self.flags5 >> 5) & 0x07
+    }
+    pub fn set_button3_type(&mut self, v: u8) {
+        set_bits(&mut self.flags5, 5, 0x07, v);
+    }
+
+    /// Write `source_main` and `channel` from a typed `AxisSource`.
+    /// `channel` is the high 4 bits of `flags2`; for non-Encoder sources
+    /// it's cleared so the field doesn't leak the previous encoder slot
+    /// into a freshly-picked pin source.
+    pub fn set_source(&mut self, source: crate::domain::AxisSource) {
+        let (sm, ch) = source.to_wire();
+        self.source_main = sm;
+        self.set_channel(ch);
+    }
+
+    /// Resolve the current source from `(source_main, channel)`.
+    #[must_use]
+    pub fn source(&self) -> crate::domain::AxisSource {
+        crate::domain::AxisSource::from_wire(self.source_main, self.channel())
     }
 }
 
@@ -876,6 +946,155 @@ mod tests {
         a.set_is_dynamic_deadband(false);
         assert!(!a.is_dynamic_deadband());
         assert_eq!(a.deadband_size(), 0x55);
+    }
+
+    /// Phase 1 of the advanced-axes port: function (flags1 b3..4),
+    /// source_secondary (flags4 b0..2), offset_angle (flags4 b3..7).
+    /// Pre-seeds flags4 = 0xff so flips on either half show up in the
+    /// other half if a mask is wrong.
+    #[test]
+    fn axis_config_phase1_setters_isolate_their_bits() {
+        let mut a = AxisConfig {
+            calib_min: 0,
+            calib_center: 0,
+            calib_max: 0,
+            flags1: 0xff,
+            curve_shape: [0; 11],
+            flags2: 0,
+            flags3: 0,
+            source_main: 0,
+            flags4: 0xff,
+            button1: 0,
+            button2: 0,
+            button3: 0,
+            divider: 0,
+            i2c_address: 0,
+            flags5: 0,
+            prescaler: 0,
+            reserved: 0,
+        };
+
+        // Function shares flags1 with out/inverted/centered/filter.
+        a.set_function(0b01);
+        assert_eq!(a.function(), 0b01);
+        assert!(a.out_enabled());
+        assert!(a.inverted());
+        assert!(a.is_centered());
+        assert_eq!(a.filter(), 0x07);
+
+        // source_secondary occupies the low 3 bits of flags4; offset
+        // occupies the high 5. Each must not stomp the other.
+        a.set_source_secondary(0b010);
+        assert_eq!(a.source_secondary(), 0b010);
+        assert_eq!(a.offset_angle(), 0x1f);
+
+        a.set_offset_angle(0b01001);
+        assert_eq!(a.offset_angle(), 0b01001);
+        assert_eq!(a.source_secondary(), 0b010);
+    }
+
+    /// Phase 2 of the advanced-axes port: button1_type (flags5 b0..2),
+    /// button2_type (flags5 b3..4, **2 bits**), button3_type (flags5 b5..7).
+    #[test]
+    fn axis_config_phase2_button_type_setters_isolate_their_bits() {
+        let mut a = AxisConfig {
+            calib_min: 0,
+            calib_center: 0,
+            calib_max: 0,
+            flags1: 0,
+            curve_shape: [0; 11],
+            flags2: 0,
+            flags3: 0,
+            source_main: 0,
+            flags4: 0,
+            button1: 0,
+            button2: 0,
+            button3: 0,
+            divider: 0,
+            i2c_address: 0,
+            flags5: 0xff,
+            prescaler: 0,
+            reserved: 0,
+        };
+
+        a.set_button1_type(0b010);
+        assert_eq!(a.button1_type(), 0b010);
+        // button2 + button3 untouched.
+        assert_eq!(a.button2_type(), 0b11);
+        assert_eq!(a.button3_type(), 0b111);
+
+        a.set_button2_type(0b01);
+        assert_eq!(a.button2_type(), 0b01);
+        assert_eq!(a.button1_type(), 0b010);
+        assert_eq!(a.button3_type(), 0b111);
+
+        a.set_button3_type(0b100);
+        assert_eq!(a.button3_type(), 0b100);
+        assert_eq!(a.button1_type(), 0b010);
+        assert_eq!(a.button2_type(), 0b01);
+    }
+
+    #[test]
+    fn axis_config_phase2_button_type_setters_truncate() {
+        let mut a = AxisConfig {
+            calib_min: 0,
+            calib_center: 0,
+            calib_max: 0,
+            flags1: 0,
+            curve_shape: [0; 11],
+            flags2: 0,
+            flags3: 0,
+            source_main: 0,
+            flags4: 0,
+            button1: 0,
+            button2: 0,
+            button3: 0,
+            divider: 0,
+            i2c_address: 0,
+            flags5: 0,
+            prescaler: 0,
+            reserved: 0,
+        };
+        a.set_button1_type(0xff);
+        a.set_button2_type(0xff);
+        a.set_button3_type(0xff);
+        assert_eq!(a.button1_type(), 0x07);
+        assert_eq!(a.button2_type(), 0x03);
+        assert_eq!(a.button3_type(), 0x07);
+        assert_eq!(a.flags5, 0xff);
+    }
+
+    #[test]
+    fn axis_config_phase1_setters_truncate_oversize_values() {
+        let mut a = AxisConfig {
+            calib_min: 0,
+            calib_center: 0,
+            calib_max: 0,
+            flags1: 0,
+            curve_shape: [0; 11],
+            flags2: 0,
+            flags3: 0,
+            source_main: 0,
+            flags4: 0,
+            button1: 0,
+            button2: 0,
+            button3: 0,
+            divider: 0,
+            i2c_address: 0,
+            flags5: 0,
+            prescaler: 0,
+            reserved: 0,
+        };
+
+        a.set_function(0xff);
+        assert_eq!(a.function(), 0x03);
+        assert_eq!(a.flags1, 0b0001_1000);
+
+        a.set_source_secondary(0xff);
+        assert_eq!(a.source_secondary(), 0x07);
+        a.set_offset_angle(0xff);
+        assert_eq!(a.offset_angle(), 0x1f);
+        assert_eq!(a.flags4, 0xff);
     }
 
     /// Setters truncate, never silently spill into adjacent fields.

@@ -1,0 +1,144 @@
+import { Palette } from "../globals/palette.slint";
+
+export component NumberCell inherits Rectangle {
+    in property <string> label;
+    in property <int> value;
+    in property <length> field-width: 70px;
+    /// When set, suppress the leading label so the cell sits cleanly in a
+    /// column under a header row.
+    in property <bool> compact: false;
+    /// When true, the cell is greyed out and ignores clicks/keyboard —
+    /// used by the Buttons tab to mark cells that don't apply to the
+    /// current row's type (e.g. Source B on a non-LOGIC row).
+    in property <bool> disabled: false;
+    /// Opt into "press a physical button to capture" mode. When set,
+    /// clicking the cell flips `armed: true`, the field pulses yellow,
+    /// and a 5-second inactivity timer auto-disarms. The capture write
+    /// itself happens Rust-side on the next `ParamsTick`.
+    in property <bool> capture-on-focus: false;
+    /// Monotonic counter Rust bumps to force-disarm this cell from
+    /// outside. Used for (b) "a successful capture landed" and
+    /// (c) "another cell just armed, drop this one". The cell observes
+    /// `changed disarm-tick` and calls `disarm()` on any edge.
+    in property <int> disarm-tick: 0;
+    /// True while the cell is in capture mode. Owned here (not derived
+    /// from `TextInput.has-focus`) because Slint's repeater + Flickable
+    /// combo doesn't reliably hold TextInput focus across the 10 Hz
+    /// model refresh — anchoring the visual state to our own bool
+    /// means the pulse survives any focus theft.
+    out property <bool> armed: false;
+    /// Fired with `true` when capture arms and `false` when it disarms
+    /// (manual toggle, second click, 5 s timeout, or Rust-side bump).
+    callback edited(int);
+    callback armed-changed(bool);
+
+    changed disarm-tick => { root.disarm(); }
+
+    // Discrete pulse phase (0 / 1). The inner Rectangle smooths the
+    // swap with `animate background` so the toggle reads as a pulse.
+    property <int> pulse-phase: 0;
+
+    height: 26px;
+    min-width: root.compact ? root.field-width : 110px;
+
+    public function disarm() {
+        if (root.armed) {
+            root.armed = false;
+            root.pulse-phase = 0;
+            root.armed-changed(false);
+        }
+    }
+
+    // Pulse driver: flips `pulse-phase` every 450 ms while armed,
+    // pauses (and resets to 0) the moment we disarm.
+    pulse-timer := Timer {
+        interval: 450ms;
+        running: root.armed;
+        triggered => { root.pulse-phase = 1 - root.pulse-phase; }
+    }
+
+    // Inactivity guard: 5 s after arming, drop capture mode so the
+    // user isn't stuck with a hot field if they wandered off.
+    // Restarts on every re-arm because `running` re-edges.
+    capture-timeout := Timer {
+        interval: 5s;
+        running: root.armed;
+        triggered => { root.disarm(); }
+    }
+
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+
+        if !root.compact: Text {
+            text: root.label;
+            color: Palette.text-dim;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            width: root.field-width;
+            height: 22px;
+            background: root.disabled
+                ? Palette.bg-cell
+                : (root.armed
+                    ? (root.pulse-phase == 0 ? #ffcc3322 : #ffcc3355)
+                    : Palette.bg-cell-alt);
+            border-color: root.disabled
+                ? Palette.border
+                : (root.armed
+                    ? #ffe066
+                    : (ti.has-focus ? Palette.accent : Palette.border));
+            border-width: root.armed && !root.disabled ? 1.5px : 1px;
+            border-radius: 3px;
+            opacity: root.disabled ? 0.45 : 1.0;
+            y: (parent.height - self.height) / 2;
+
+            animate background { duration: 420ms; easing: ease-in-out; }
+            animate border-color { duration: 200ms; }
+
+            ti := TextInput {
+                text: root.value;
+                color: Palette.text;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                input-type: number;
+                read-only: root.disabled;
+                width: parent.width - 8px;
+                x: 4px;
+                edited => {
+                    if (self.text == "" || self.text == "-") {
+                        return;
+                    }
+                    root.edited(self.text.to-float());
+                }
+                accepted => { self.clear-focus(); }
+            }
+
+            // TouchArea last → on top in z-order. For capture cells,
+            // click toggles arm. For plain numeric cells, click focuses
+            // the inner TextInput so typing still works through Flickable
+            // (which otherwise swallows the click).
+            ta := TouchArea {
+                enabled: !root.disabled;
+                mouse-cursor: text;
+                clicked => {
+                    if (root.capture-on-focus) {
+                        if (root.armed) {
+                            root.disarm();
+                        } else {
+                            root.armed = true;
+                            root.pulse-phase = 1;
+                            root.armed-changed(true);
+                            ti.focus();
+                        }
+                    } else {
+                        ti.focus();
+                    }
+                }
+            }
+        }
+    }
+}

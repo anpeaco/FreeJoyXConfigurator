@@ -1,0 +1,24 @@
+// Single source of truth for the currently-displayed tooltip. Buttons
+// (and any other element with hover-able help text) publish to this on
+// hover-in; the AppWindow's `TooltipOverlay` reads it and renders the
+// pill at the anchored coords. Using a global avoids the prop-drilling
+// alternative (10+ layers of `tooltip-text` forwarding through every
+// container) and matches the same pattern as `Palette` and the
+// `dropdown-*` properties on AppWindow.
+//
+// Writing protocol (see the `tooltip` property on every button):
+//
+//   1. On hover-in (TouchArea.has-hover -> true), set `text`,
+//      `anchor-x`, `anchor-y` from the button's `absolute-position`,
+//      then `visible: true`.
+//   2. On hover-out, if the global text still matches this button's
+//      tooltip, clear (`visible: false`, `text: ""`). The
+//      "still-matches" guard prevents a fast hover-A → hover-B
+//      sequence where A's hover-out fires *after* B's hover-in and
+//      would otherwise clobber B's tooltip.
+export global TooltipState {
+    in-out property <string> text: "";
+    in-out property <length> anchor-x: 0px;
+    in-out property <length> anchor-y: 0px;
+    in-out property <bool> visible: false;
+}

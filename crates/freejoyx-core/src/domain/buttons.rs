@@ -190,19 +190,21 @@ impl ButtonType {
     }
 
     /// Category the type belongs to in the category-grouped picker.
-    /// Ordering follows the picker's display order (Basic / Gestures /
-    /// Toggle switches / POV 1..4 / Encoder / Radio / Sequential /
-    /// Logic) and groups POV3 Center back with POV3 even though its
-    /// wire byte was appended late.
+    /// Ordering follows the picker's display order (Basic / Toggle
+    /// switches / POV 1..4 / Encoder / Radio / Sequential) and groups
+    /// POV3 Center back with POV3 even though its wire byte was
+    /// appended late.
     #[must_use]
     pub fn category(self) -> ButtonTypeCategory {
         use ButtonTypeCategory::{
-            Basic, Encoder, Gestures, Logic, Pov1, Pov2, Pov3, Pov4, Radio, Sequential,
-            ToggleSwitches,
+            Basic, Encoder, Pov1, Pov2, Pov3, Pov4, Radio, Sequential, ToggleSwitches,
         };
         match self {
-            Self::Normal | Self::Toggle => Basic,
-            Self::Tap | Self::DoubleTap => Gestures,
+            // Basic absorbs Tap / DoubleTap (formerly Gestures) and
+            // Logic (formerly its own group) — all everyday cockpit
+            // switch types, so surfacing them together cuts picker
+            // traversal vs. the old three-header split.
+            Self::Normal | Self::Tap | Self::DoubleTap | Self::Toggle | Self::Logic => Basic,
             Self::ToggleSwitch | Self::ToggleSwitchOn | Self::ToggleSwitchOff => ToggleSwitches,
             Self::Pov1Up | Self::Pov1Right | Self::Pov1Down | Self::Pov1Left | Self::Pov1Center => {
                 Pov1
@@ -223,7 +225,6 @@ impl ButtonType {
             Self::EncoderInputA | Self::EncoderInputB => Encoder,
             Self::Radio1 | Self::Radio2 | Self::Radio3 | Self::Radio4 => Radio,
             Self::SequentialToggle | Self::SequentialButton => Sequential,
-            Self::Logic => Logic,
         }
     }
 }
@@ -233,7 +234,6 @@ impl ButtonType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ButtonTypeCategory {
     Basic,
-    Gestures,
     ToggleSwitches,
     Pov1,
     Pov2,
@@ -242,7 +242,6 @@ pub enum ButtonTypeCategory {
     Encoder,
     Radio,
     Sequential,
-    Logic,
 }
 
 impl ButtonTypeCategory {
@@ -251,7 +250,6 @@ impl ButtonTypeCategory {
     pub fn label(self) -> &'static str {
         match self {
             Self::Basic => "Basic",
-            Self::Gestures => "Gestures",
             Self::ToggleSwitches => "Toggle switches",
             Self::Pov1 => "POV 1",
             Self::Pov2 => "POV 2",
@@ -260,7 +258,6 @@ impl ButtonTypeCategory {
             Self::Encoder => "Encoder",
             Self::Radio => "Radio",
             Self::Sequential => "Sequential",
-            Self::Logic => "Logic",
         }
     }
 
@@ -268,7 +265,6 @@ impl ButtonTypeCategory {
     pub fn all() -> impl Iterator<Item = Self> {
         [
             Self::Basic,
-            Self::Gestures,
             Self::ToggleSwitches,
             Self::Pov1,
             Self::Pov2,
@@ -277,7 +273,6 @@ impl ButtonTypeCategory {
             Self::Encoder,
             Self::Radio,
             Self::Sequential,
-            Self::Logic,
         ]
         .into_iter()
     }
@@ -288,8 +283,13 @@ impl ButtonTypeCategory {
     #[must_use]
     pub fn entries(self) -> &'static [ButtonType] {
         match self {
-            Self::Basic => &[ButtonType::Normal, ButtonType::Toggle],
-            Self::Gestures => &[ButtonType::Tap, ButtonType::DoubleTap],
+            Self::Basic => &[
+                ButtonType::Normal,
+                ButtonType::Tap,
+                ButtonType::DoubleTap,
+                ButtonType::Toggle,
+                ButtonType::Logic,
+            ],
             Self::ToggleSwitches => &[
                 ButtonType::ToggleSwitch,
                 ButtonType::ToggleSwitchOn,
@@ -334,7 +334,6 @@ impl ButtonTypeCategory {
                 ButtonType::SequentialToggle,
                 ButtonType::SequentialButton,
             ],
-            Self::Logic => &[ButtonType::Logic],
         }
     }
 }
@@ -366,6 +365,11 @@ pub enum CoexistenceCheck {
 /// [`CoexistenceCheck::Blocked`] with the first offending slot
 /// otherwise.
 ///
+/// **LOGIC slots are exempt** — their `physical_num` is the Source A
+/// *button index*, not a physical GPIO, so the value never collides
+/// with a real physical pin. LOGIC and NORMAL (or any other type)
+/// always coexist freely.
+///
 /// Physical -1 (`unassigned`) is always allowed: an unassigned slot
 /// doesn't collide with anything.
 #[must_use]
@@ -375,11 +379,16 @@ pub fn physical_assignment_blocked(
     physical_num: i8,
     candidate: ButtonType,
 ) -> CoexistenceCheck {
-    if physical_num < 0 {
+    if physical_num < 0 || candidate == ButtonType::Logic {
         return CoexistenceCheck::Ok;
     }
     for (i, other) in buttons.iter().enumerate() {
         if i == slot || other.physical_num != physical_num {
+            continue;
+        }
+        // Other slots that are LOGIC use their `physical_num` field as
+        // a Source A button index, not as a GPIO — skip them.
+        if other.button_type == BUTTON_TYPE_LOGIC {
             continue;
         }
         let other_typed = ButtonType::from_u8(other.button_type);
@@ -533,30 +542,30 @@ mod tests {
     }
 
     #[test]
-    fn coexistence_blocks_logic_against_existing_normal() {
+    fn coexistence_allows_logic_against_existing_normal() {
+        // LOGIC's `physical_num` is a Source A button index, not a GPIO,
+        // so the value `7` here means "Source A = button slot 7" — it
+        // doesn't conflict with another slot wired to physical pin 7.
         let mut buttons = empty_buttons();
         buttons[0].physical_num = 7;
         buttons[0].button_type = ButtonType::Normal.to_u8();
         assert_eq!(
             physical_assignment_blocked(&buttons, 2, 7, ButtonType::Logic),
-            CoexistenceCheck::Blocked {
-                other_slot: 0,
-                other_type: ButtonType::Normal.to_u8(),
-            }
+            CoexistenceCheck::Ok,
         );
     }
 
     #[test]
-    fn coexistence_blocks_normal_against_existing_logic() {
+    fn coexistence_allows_normal_against_existing_logic() {
+        // Mirror of the above. The existing LOGIC slot's
+        // `physical_num` is a button-index field, not a real pin
+        // assignment, so a NORMAL slot can claim physical 4 freely.
         let mut buttons = empty_buttons();
         buttons[3].physical_num = 4;
         buttons[3].button_type = ButtonType::Logic.to_u8();
         assert_eq!(
             physical_assignment_blocked(&buttons, 9, 4, ButtonType::Normal),
-            CoexistenceCheck::Blocked {
-                other_slot: 3,
-                other_type: ButtonType::Logic.to_u8(),
-            }
+            CoexistenceCheck::Ok,
         );
     }
 

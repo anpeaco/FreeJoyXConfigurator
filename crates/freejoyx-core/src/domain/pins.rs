@@ -336,6 +336,21 @@ impl Board {
         USED_PINS_NUM
     }
 
+    /// Full physical-pin layout in board-silkscreen order. Each entry
+    /// is one of the 40 header holes on the board (20 per side, USB
+    /// up): configurable GPIOs carry a `wire_slot` into
+    /// `dev_config_t.pins`; power / reset / USB-D+ / USB-D- / VBUS
+    /// holes carry a `role_label` and no wire slot — the configurator
+    /// renders them locked so the user sees the complete pinout but
+    /// can't reassign fixed-function pins.
+    #[must_use]
+    pub fn layout(self) -> &'static [BoardSlot; BOARD_LAYOUT_LEN] {
+        match self {
+            Self::Bluepill => &BLUEPILL_BOARD_LAYOUT,
+            Self::Blackpill => &BLACKPILL_BOARD_LAYOUT,
+        }
+    }
+
     /// Display name for the pin at `slot` (0..30). Out-of-range
     /// returns `"?"`.
     #[must_use]
@@ -367,6 +382,147 @@ pub const BLUEPILL_PIN_NAMES: [&str; USED_PINS_NUM] = [
     "PB0", "PB1", "PB3", "PB4", "PB5", "PB6", "PB7", "PB8", "PB9", "PB10", "PB11", "PB12", "PB13",
     "PB14", "PB15", //
     "PC13", "PC14", "PC15",
+];
+
+/// One physical pin hole on the board. Either a configurable GPIO
+/// (`wire_slot` indexes `dev_config_t.pins[]`) or a fixed-function
+/// hole (power / reset / USB / VBUS), rendered locked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardSlot {
+    /// Silkscreen text rendered as the row label.
+    pub silk: &'static str,
+    /// `Some(idx)` for configurable GPIOs (where the dropdown
+    /// reaches `dev_config_t.pins[idx]`). `None` for fixed-role
+    /// holes — the configurator skips the dropdown and renders the
+    /// `role_label` instead.
+    pub wire_slot: Option<usize>,
+    /// Display label for fixed holes (e.g. "GND", "3.3V"). Empty
+    /// for GPIO slots.
+    pub role_label: &'static str,
+}
+
+/// Total board hole count, including fixed-role holes.
+pub const BOARD_LAYOUT_LEN: usize = 40;
+
+/// Full BluePill (F103C8T6) header pinout in silkscreen order, USB
+/// up. Left column (indices 0..19) flows top-to-bottom; right column
+/// (indices 20..39) flows top-to-bottom. 30 of the 40 holes are
+/// configurable GPIOs whose `wire_slot` indexes
+/// [`BLUEPILL_PIN_NAMES`]; the other 10 are fixed roles rendered
+/// locked.
+pub const BLUEPILL_BOARD_LAYOUT: [BoardSlot; BOARD_LAYOUT_LEN] = [
+    // -- Left column (UI), top → bottom — B-side of the board --
+    BoardSlot { silk: "PB12", wire_slot: Some(23), role_label: ""      },
+    BoardSlot { silk: "PB13", wire_slot: Some(24), role_label: ""      },
+    BoardSlot { silk: "PB14", wire_slot: Some(25), role_label: ""      },
+    BoardSlot { silk: "PB15", wire_slot: Some(26), role_label: ""      },
+    BoardSlot { silk: "PA8",  wire_slot: Some(8),  role_label: ""      },
+    BoardSlot { silk: "PA9",  wire_slot: Some(9),  role_label: ""      },
+    BoardSlot { silk: "PA10", wire_slot: Some(10), role_label: ""      },
+    BoardSlot { silk: "PA11", wire_slot: None,     role_label: "USBD-" },
+    BoardSlot { silk: "PA12", wire_slot: None,     role_label: "USBD+" },
+    BoardSlot { silk: "PA15", wire_slot: Some(11), role_label: ""      },
+    BoardSlot { silk: "PB3",  wire_slot: Some(14), role_label: ""      },
+    BoardSlot { silk: "PB4",  wire_slot: Some(15), role_label: ""      },
+    BoardSlot { silk: "PB5",  wire_slot: Some(16), role_label: ""      },
+    BoardSlot { silk: "PB6",  wire_slot: Some(17), role_label: ""      },
+    BoardSlot { silk: "PB7",  wire_slot: Some(18), role_label: ""      },
+    BoardSlot { silk: "PB8",  wire_slot: Some(19), role_label: ""      },
+    BoardSlot { silk: "PB9",  wire_slot: Some(20), role_label: ""      },
+    BoardSlot { silk: "5V",   wire_slot: None,     role_label: "5V"    },
+    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
+    BoardSlot { silk: "3V3",  wire_slot: None,     role_label: "3.3V"  },
+    // -- Right column (UI), top → bottom — A-side of the board --
+    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
+    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
+    BoardSlot { silk: "3V3",  wire_slot: None,     role_label: "3.3V"  },
+    BoardSlot { silk: "RST",  wire_slot: None,     role_label: "Reset" },
+    BoardSlot { silk: "PB11", wire_slot: Some(22), role_label: ""      },
+    BoardSlot { silk: "PB10", wire_slot: Some(21), role_label: ""      },
+    BoardSlot { silk: "PB1",  wire_slot: Some(13), role_label: ""      },
+    BoardSlot { silk: "PB0",  wire_slot: Some(12), role_label: ""      },
+    BoardSlot { silk: "PA7",  wire_slot: Some(7),  role_label: ""      },
+    BoardSlot { silk: "PA6",  wire_slot: Some(6),  role_label: ""      },
+    BoardSlot { silk: "PA5",  wire_slot: Some(5),  role_label: ""      },
+    BoardSlot { silk: "PA4",  wire_slot: Some(4),  role_label: ""      },
+    BoardSlot { silk: "PA3",  wire_slot: Some(3),  role_label: ""      },
+    BoardSlot { silk: "PA2",  wire_slot: Some(2),  role_label: ""      },
+    BoardSlot { silk: "PA1",  wire_slot: Some(1),  role_label: ""      },
+    BoardSlot { silk: "PA0",  wire_slot: Some(0),  role_label: ""      },
+    BoardSlot { silk: "PC15", wire_slot: Some(29), role_label: ""      },
+    BoardSlot { silk: "PC14", wire_slot: Some(28), role_label: ""      },
+    BoardSlot { silk: "PC13", wire_slot: Some(27), role_label: ""      },
+    BoardSlot { silk: "VBUS", wire_slot: None,     role_label: "VBUS"  },
+];
+
+/// WeAct STM32F411CE BlackPill V3.x pinout in silkscreen order, USB-C
+/// up, viewed from the component side. Layout traced from the WeAct
+/// reference card (`MiniSTM32F4x1` repo) — 40 holes, 20 per side, GPIOs
+/// at the USB end, power rails at the opposite end.
+///
+/// Chip-pin notes:
+/// - The header hole the LQFP48 package calls **PB2** is bonded to die
+///   pin PB11 — the configurator stores its wire value in
+///   `dev_config_t.pins[22]` (the same slot BluePill uses for its own
+///   PB11). [`Board::pin_name`] renames slot 22 to `"PB2"` so call
+///   sites that don't carry a `BoardSlot` still produce the right
+///   label.
+/// - PA13 / PA14 are SWD (debug) pads on the bottom-edge debug header,
+///   not the side headers — omitted from this layout.
+/// - PA11 / PA12 are USB-D-/D+ — locked.
+/// - BOOT0 is a side button on the centreline, not a header hole.
+/// - PC13 drives the on-board PWR/KEY-side LED but the pad IS exposed
+///   on the bottom-right of the header; usable as GPIO if you accept
+///   the LED side-effect.
+pub const BLACKPILL_BOARD_LAYOUT: [BoardSlot; BOARD_LAYOUT_LEN] = [
+    // -- Left column (UI), top → bottom — board's left header
+    // (PB12..PB15 / PA8..PA12 / PA15 / PB3..PB9 / 5V / GND / 3V3) --
+    BoardSlot { silk: "PB12", wire_slot: Some(23), role_label: ""      },
+    BoardSlot { silk: "PB13", wire_slot: Some(24), role_label: ""      },
+    BoardSlot { silk: "PB14", wire_slot: Some(25), role_label: ""      },
+    BoardSlot { silk: "PB15", wire_slot: Some(26), role_label: ""      },
+    BoardSlot { silk: "PA8",  wire_slot: Some(8),  role_label: ""      },
+    BoardSlot { silk: "PA9",  wire_slot: Some(9),  role_label: ""      },
+    BoardSlot { silk: "PA10", wire_slot: Some(10), role_label: ""      },
+    BoardSlot { silk: "PA11", wire_slot: None,     role_label: "USBD-" },
+    BoardSlot { silk: "PA12", wire_slot: None,     role_label: "USBD+" },
+    BoardSlot { silk: "PA15", wire_slot: Some(11), role_label: ""      },
+    BoardSlot { silk: "PB3",  wire_slot: Some(14), role_label: ""      },
+    BoardSlot { silk: "PB4",  wire_slot: Some(15), role_label: ""      },
+    BoardSlot { silk: "PB5",  wire_slot: Some(16), role_label: ""      },
+    BoardSlot { silk: "PB6",  wire_slot: Some(17), role_label: ""      },
+    BoardSlot { silk: "PB7",  wire_slot: Some(18), role_label: ""      },
+    BoardSlot { silk: "PB8",  wire_slot: Some(19), role_label: ""      },
+    BoardSlot { silk: "PB9",  wire_slot: Some(20), role_label: ""      },
+    BoardSlot { silk: "5V",   wire_slot: None,     role_label: "5V"    },
+    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
+    BoardSlot { silk: "3V3",  wire_slot: None,     role_label: "3.3V"  },
+    // -- Right column (UI), top → bottom — board's right header
+    // (5V / GND / 3V3 / PB10 / PB2 / PB1 / PB0 / PA7..PA0 /
+    //  RESET / PC15 / PC14 / PC13 / VBAT) --
+    BoardSlot { silk: "5V",   wire_slot: None,     role_label: "5V"    },
+    BoardSlot { silk: "GND",  wire_slot: None,     role_label: "GND"   },
+    BoardSlot { silk: "3V3",  wire_slot: None,     role_label: "3.3V"  },
+    BoardSlot { silk: "PB10", wire_slot: Some(21), role_label: ""      },
+    // Silk hole "PB2" — die pin PB11, wire slot 22. Same slot as
+    // BluePill's "PB11" hole; [`Board::pin_name`] knows about the
+    // rename for call sites that don't carry a `BoardSlot`.
+    BoardSlot { silk: "PB2",  wire_slot: Some(22), role_label: ""      },
+    BoardSlot { silk: "PB1",  wire_slot: Some(13), role_label: ""      },
+    BoardSlot { silk: "PB0",  wire_slot: Some(12), role_label: ""      },
+    BoardSlot { silk: "PA7",  wire_slot: Some(7),  role_label: ""      },
+    BoardSlot { silk: "PA6",  wire_slot: Some(6),  role_label: ""      },
+    BoardSlot { silk: "PA5",  wire_slot: Some(5),  role_label: ""      },
+    BoardSlot { silk: "PA4",  wire_slot: Some(4),  role_label: ""      },
+    BoardSlot { silk: "PA3",  wire_slot: Some(3),  role_label: ""      },
+    BoardSlot { silk: "PA2",  wire_slot: Some(2),  role_label: ""      },
+    BoardSlot { silk: "PA1",  wire_slot: Some(1),  role_label: ""      },
+    BoardSlot { silk: "PA0",  wire_slot: Some(0),  role_label: ""      },
+    BoardSlot { silk: "RESET",wire_slot: None,     role_label: "Reset" },
+    BoardSlot { silk: "PC15", wire_slot: Some(29), role_label: ""      },
+    BoardSlot { silk: "PC14", wire_slot: Some(28), role_label: ""      },
+    BoardSlot { silk: "PC13", wire_slot: Some(27), role_label: ""      },
+    BoardSlot { silk: "VBAT", wire_slot: None,     role_label: "VBAT"  },
 ];
 
 /// Why a pin slot is in conflict with the rest of the configuration.
