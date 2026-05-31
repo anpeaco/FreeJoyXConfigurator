@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/freejoyx-core",
     "crates/freejoyx-device",
+    "crates/freejoyx-flash",
     "crates/freejoyx-ui",
     "crates/freejoyx-app",
 ]
