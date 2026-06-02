@@ -64,47 +64,24 @@ jobs:
             Start-Sleep -Seconds 5
           }
 
-      # ---------------------------------------------------------------------
-      # *** ITERATION POINT ***  WDK redist provisioning.
-      # libwdi-sys embeds the KMDF WDF coinstaller (WdfCoInstaller01011.dll) and
-      # by default looks for it under "...\Windows Kits\8.0\redist\wdf\<arch>\".
-      # A bare runner doesn't have it there (reproduced locally + the choco
-      # 'windowsdriverkit81' package no longer exists on the feed).
-      #
-      # The build script honours a WDK_DIR override (libwdi-sys build.rs:462),
-      # appending \redist\wdf\<arch>\WdfCoInstaller01011.dll. So: locate the DLL
-      # ANYWHERE under Program Files (VS 2022 ships WDK/KMDF components), then
-      # reconstruct that exact layout under RUNNER_TEMP and point WDK_DIR at it.
-      # If it's genuinely absent we fail fast with a listing -- the next round
-      # vendors the DLL into the repo (deterministic, no runner dependency).
-      # ---------------------------------------------------------------------
-      - name: Provision WDK redist (WdfCoInstaller)
+      # libwdi-sys embeds the KMDF + WinUSB co-installers and looks for them
+      # under "<WDK_DIR>\redist\wdf\<arch>\" (build.rs:462 honours WDK_DIR;
+      # config.h sets WDF_VER=1011, COINSTALLER_DIR="wdf"). The runner has only
+      # Windows Kits 10 (SDK, no WDK redist), and the standalone WDK 8 redist
+      # is gone from chocolatey -- so we vendor the four genuine, Microsoft-
+      # signed redist DLLs in-repo (ci/wdk-redist, see its README for
+      # provenance) and just point WDK_DIR at them. Fully deterministic; no
+      # download or install at build time.
+      - name: Point WDK_DIR at the vendored redist
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Write-Host "=== Windows Kits dirs present ==="
-          foreach ($r in 'C:\Program Files (x86)\Windows Kits','C:\Program Files\Windows Kits') {
-            if (Test-Path $r) { Get-ChildItem $r -Directory -ErrorAction SilentlyContinue | ForEach-Object FullName }
-          }
-          Write-Host "=== searching for WdfCoInstaller01011.dll ==="
-          $hits = Get-ChildItem -Path 'C:\Program Files (x86)','C:\Program Files' `
-                    -Recurse -Filter 'WdfCoInstaller01011.dll' -ErrorAction SilentlyContinue
-          $hits | ForEach-Object FullName
-          if (-not $hits) {
-            Write-Host "=== none found; ANY WdfCoInstaller*.dll on the runner: ==="
-            Get-ChildItem -Path 'C:\Program Files (x86)','C:\Program Files' `
-              -Recurse -Filter 'WdfCoInstaller*.dll' -ErrorAction SilentlyContinue | ForEach-Object FullName
-            throw "WdfCoInstaller01011.dll not present on the runner -- vendor it into the repo next round"
-          }
-          # Reconstruct <WDK_DIR>\redist\wdf\{x64,x86}\WdfCoInstaller01011.dll so
-          # the embedder finds it regardless of where the source copy lived.
-          $wdk = Join-Path $env:RUNNER_TEMP 'wdk'
-          foreach ($arch in 'x64','x86') {
-            $d = Join-Path $wdk "redist\wdf\$arch"
-            New-Item -ItemType Directory -Force -Path $d | Out-Null
-            $src = $hits | Where-Object { $_.FullName -match "\\$arch\\" } | Select-Object -First 1
-            if (-not $src) { $src = $hits | Select-Object -First 1 }
-            Copy-Item $src.FullName (Join-Path $d 'WdfCoInstaller01011.dll') -Force
+          $wdk = Join-Path $env:GITHUB_WORKSPACE 'ci\wdk-redist'
+          foreach ($f in 'redist\wdf\x64\WdfCoInstaller01011.dll',
+                         'redist\wdf\x64\winusbcoinstaller2.dll',
+                         'redist\wdf\x86\WdfCoInstaller01011.dll',
+                         'redist\wdf\x86\winusbcoinstaller2.dll') {
+            if (-not (Test-Path (Join-Path $wdk $f))) { throw "vendored WDK redist missing: $f" }
           }
           Write-Host "WDK_DIR -> $wdk"
           "WDK_DIR=$wdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
