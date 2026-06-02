@@ -17,14 +17,9 @@ name: Release freejoyx-flash helper
 
 on:
   push:
-    # TEMP (remove before merging to main): run on every push to the test
-    # branch so the Windows WDK/autobind build can be iterated without cutting
-    # a tag. The `release` job stays gated on the tag, so branch pushes build +
-    # upload artifacts but publish nothing.
-    branches: [ci/flash-helper-release]
     tags: ['flash-v*']
-  # Manual runs are allowed so a helper build can be cut without a tag while
-  # the Windows toolchain step (below) is still being stabilised.
+  # Manual runs (Actions tab "Run workflow") build + upload artifacts without
+  # publishing -- the `release` job is gated on the tag.
   workflow_dispatch:
 
 permissions:
