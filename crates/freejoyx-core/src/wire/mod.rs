@@ -8,7 +8,7 @@
 //! - [`error`]: typed errors for decode failures
 //! - [`cursor`]: little-endian read/write helpers
 //! - [`fragments`]: HID frame splitter / reassembler (2-byte header + 62 payload)
-//! - [`params`]: `params_report_t` codec (72 bytes after reassembly)
+//! - [`params`]: `params_report_t` codec (72 bytes legacy, 88 from v0.1.3)
 //! - `config` (not yet implemented): `dev_config_t` codec (1580 bytes
 //!   after reassembly across 26 fragments)
 //!
@@ -38,4 +38,6 @@ pub use fragments::{
     fragment_count, reassemble_fragments, reassemble_two_fragment, Frame, FRAGMENT_PAYLOAD,
     FRAME_SIZE, REPORT_ID_CONFIG_IN, REPORT_ID_PARAM,
 };
-pub use params::{ParamsReport, BUTTON_BITMAP_BYTES, MAX_AXIS_NUM, PARAMS_REPORT_SIZE};
+pub use params::{
+    ParamsReport, BUTTON_BITMAP_BYTES, MAX_AXIS_NUM, PARAMS_REPORT_LEGACY_SIZE, PARAMS_REPORT_SIZE,
+};

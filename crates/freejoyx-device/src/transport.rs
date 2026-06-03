@@ -571,10 +571,11 @@ impl Device {
                 );
                 self.pending.clear();
                 if let Some(bytes) = reports.into_iter().next() {
-                    let array: [u8; PARAMS_REPORT_SIZE] = bytes
-                        .try_into()
-                        .expect("reassemble_fragments guarantees PARAMS_REPORT_SIZE length");
-                    return Ok(ParamsReport::decode(&array)?);
+                    // `decode` accepts the assembled slice (72 legacy or 88 with
+                    // detect_axis_raw); it reads the appended field only for
+                    // firmware >= 0.1.3, so reassembling to the full size is safe
+                    // for older devices too.
+                    return Ok(ParamsReport::decode(&bytes)?);
                 }
                 // Fragments arrived but didn't assemble cleanly (e.g.
                 // out-of-order). Loop and wait for the next valid pair.

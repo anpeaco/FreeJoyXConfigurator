@@ -8,10 +8,11 @@
 //! frame[2..]  = 62 bytes of payload
 //! ```
 //!
-//! `params_report_t` (72 bytes) is split across **two** frames:
+//! `params_report_t` (72 bytes legacy, 88 from firmware v0.1.3) is split
+//! across **two** frames:
 //! - frame 0 carries payload bytes 0..62
-//! - frame 1 carries payload bytes 62..72 (last 10 bytes; remaining
-//!   52 bytes of the frame are unused / zero)
+//! - frame 1 carries the remaining bytes (62..72 legacy, or 62..88 with
+//!   `detect_axis_raw`); the rest of the frame is unused / zero
 //!
 //! `dev_config_t` (1580 bytes) is split across **26** frames:
 //! - frames 0..25 carry 62 bytes each = 1612 bytes total

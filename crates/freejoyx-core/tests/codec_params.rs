@@ -5,11 +5,18 @@
 //! streams of 64-byte HID frames as captured by the throwaway patch
 //! to `FreeJoyXConfiguratorQt/src/hiddevice.cpp`. See
 //! `<repo>/fixtures/REGEN.md` for the regeneration recipe.
+//!
+//! NOTE: all current fixtures were captured from firmware v0.1
+//! (`firmware_version=0x0010`, pre-0.1.3), so the logical report is the
+//! 72-byte legacy form — hence `PARAMS_REPORT_LEGACY_SIZE` throughout. The
+//! 88-byte `detect_axis_raw` form (firmware >= 0.1.3) is covered by the
+//! synthetic unit tests in `wire::params`; add an 88-byte fixture here once a
+//! >= 0.1.3 device can be captured (see `fixtures/REGEN.md`).
 
 use std::path::{Path, PathBuf};
 
 use freejoyx_core::wire::{
-    reassemble_two_fragment, ParamsReport, FRAME_SIZE, PARAMS_REPORT_SIZE, REPORT_ID_PARAM,
+    reassemble_two_fragment, ParamsReport, FRAME_SIZE, PARAMS_REPORT_LEGACY_SIZE, REPORT_ID_PARAM,
 };
 
 /// Walk up from the current test binary's manifest directory to find
@@ -75,7 +82,7 @@ fn fixture_streams_have_expected_report_id() {
 fn reassembly_produces_72_byte_reports() {
     for set in ["minimal", "wide_coverage", "params_stream"] {
         let stream = load_stream(set);
-        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_SIZE);
+        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_LEGACY_SIZE);
         assert!(
             !reports.is_empty(),
             "{set}: reassembly produced no logical reports from {} bytes",
@@ -84,8 +91,8 @@ fn reassembly_produces_72_byte_reports() {
         for (i, r) in reports.iter().enumerate() {
             assert_eq!(
                 r.len(),
-                PARAMS_REPORT_SIZE,
-                "{set} report {i}: reassembled length {} != {PARAMS_REPORT_SIZE}",
+                PARAMS_REPORT_LEGACY_SIZE,
+                "{set} report {i}: reassembled length {} != {PARAMS_REPORT_LEGACY_SIZE}",
                 r.len()
             );
         }
@@ -105,10 +112,9 @@ fn reassembly_produces_72_byte_reports() {
 fn every_report_decodes_without_error() {
     for set in ["minimal", "wide_coverage", "params_stream"] {
         let stream = load_stream(set);
-        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_SIZE);
+        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_LEGACY_SIZE);
         for (i, raw) in reports.iter().enumerate() {
-            let bytes: &[u8; PARAMS_REPORT_SIZE] = raw.as_slice().try_into().unwrap();
-            ParamsReport::decode(bytes)
+            ParamsReport::decode(raw)
                 .unwrap_or_else(|e| panic!("{set} report {i}: decode error {e}"));
         }
     }
@@ -121,10 +127,9 @@ fn firmware_version_matches_target() {
     const EXPECTED: u16 = 0x0010;
     for set in ["minimal", "wide_coverage", "params_stream"] {
         let stream = load_stream(set);
-        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_SIZE);
+        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_LEGACY_SIZE);
         for (i, raw) in reports.iter().enumerate() {
-            let bytes: &[u8; PARAMS_REPORT_SIZE] = raw.as_slice().try_into().unwrap();
-            let p = ParamsReport::decode(bytes).unwrap();
+            let p = ParamsReport::decode(raw).unwrap();
             assert_eq!(
                 p.firmware_version, EXPECTED,
                 "{set} report {i}: firmware_version 0x{:04x} != expected 0x{EXPECTED:04x}",
@@ -141,13 +146,10 @@ fn board_id_is_consistent_within_a_capture() {
     // differ, since fixtures may come from BluePill vs BlackPill.)
     for set in ["minimal", "wide_coverage", "params_stream"] {
         let stream = load_stream(set);
-        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_SIZE);
-        let first = ParamsReport::decode(reports[0].as_slice().try_into().unwrap())
-            .unwrap()
-            .board_id;
+        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_LEGACY_SIZE);
+        let first = ParamsReport::decode(&reports[0]).unwrap().board_id;
         for (i, raw) in reports.iter().enumerate() {
-            let bytes: &[u8; PARAMS_REPORT_SIZE] = raw.as_slice().try_into().unwrap();
-            let p = ParamsReport::decode(bytes).unwrap();
+            let p = ParamsReport::decode(raw).unwrap();
             assert_eq!(
                 p.board_id, first,
                 "{set} report {i}: board_id {} drifted from {first}",
@@ -164,14 +166,13 @@ fn fixture_round_trip_is_byte_identical() {
     // somewhere (likely an offset / sign / endianness slip).
     for set in ["minimal", "wide_coverage", "params_stream"] {
         let stream = load_stream(set);
-        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_SIZE);
+        let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_LEGACY_SIZE);
         for (i, raw) in reports.iter().enumerate() {
-            let bytes: &[u8; PARAMS_REPORT_SIZE] = raw.as_slice().try_into().unwrap();
-            let p = ParamsReport::decode(bytes).unwrap();
+            let p = ParamsReport::decode(raw).unwrap();
             let re = p.encode();
             assert_eq!(
-                &re[..],
-                &bytes[..],
+                re.as_slice(),
+                raw.as_slice(),
                 "{set} report {i}: round-trip diverged at first differing byte"
             );
         }
@@ -185,10 +186,9 @@ fn params_stream_has_axis_movement() {
     // somewhere in the stream — proves the codec sees varying
     // multi-byte field values, not just zeros.
     let stream = load_stream("params_stream");
-    let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_SIZE);
+    let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_LEGACY_SIZE);
     let saw_nonzero_axis = reports.iter().any(|raw| {
-        let bytes: &[u8; PARAMS_REPORT_SIZE] = raw.as_slice().try_into().unwrap();
-        let p = ParamsReport::decode(bytes).unwrap();
+        let p = ParamsReport::decode(raw).unwrap();
         p.axis_data.iter().any(|&v| v != 0)
     });
     assert!(
@@ -207,10 +207,9 @@ fn params_stream_has_button_or_shift_activity() {
     // round-trip test) — just regenerate params_stream while
     // pressing buttons to harden the field coverage.
     let stream = load_stream("params_stream");
-    let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_SIZE);
+    let reports = reassemble_two_fragment(&stream, REPORT_ID_PARAM, PARAMS_REPORT_LEGACY_SIZE);
     let saw_activity = reports.iter().any(|raw| {
-        let bytes: &[u8; PARAMS_REPORT_SIZE] = raw.as_slice().try_into().unwrap();
-        let p = ParamsReport::decode(bytes).unwrap();
+        let p = ParamsReport::decode(raw).unwrap();
         p.phy_button_data.iter().any(|&b| b != 0)
             || p.log_button_data.iter().any(|&b| b != 0)
             || p.shift_button_data != 0
