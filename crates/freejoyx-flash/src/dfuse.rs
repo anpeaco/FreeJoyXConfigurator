@@ -275,11 +275,11 @@ struct Timings {
 impl Timings {
     fn from_env() -> Timings {
         Timings {
-            poll_floor_ms: env_u64("FREEJOYX_FLASH_POLL_FLOOR_MS", 5),
-            pre_status_settle_ms: env_u64("FREEJOYX_FLASH_PRE_STATUS_MS", 2),
-            post_op_settle_ms: env_u64("FREEJOYX_FLASH_SETTLE_MS", 8),
-            retry_backoff_ms: env_u64("FREEJOYX_FLASH_RETRY_BACKOFF_MS", 25),
-            block_retries: env_u64("FREEJOYX_FLASH_BLOCK_RETRIES", 4) as u32,
+            poll_floor_ms: env_u64("FREEJOYX_FLASH_POLL_FLOOR_MS", 8),
+            pre_status_settle_ms: env_u64("FREEJOYX_FLASH_PRE_STATUS_MS", 3),
+            post_op_settle_ms: env_u64("FREEJOYX_FLASH_SETTLE_MS", 20),
+            retry_backoff_ms: env_u64("FREEJOYX_FLASH_RETRY_BACKOFF_MS", 40),
+            block_retries: env_u64("FREEJOYX_FLASH_BLOCK_RETRIES", 6) as u32,
             max_polls: env_u64("FREEJOYX_FLASH_MAX_POLLS", 1000) as u32,
         }
     }
@@ -306,6 +306,29 @@ enum WaitError {
     Io(String),
 }
 
+/// Why a read-back verify didn't confirm the image. The distinction matters:
+/// `Mismatch` is a genuine bad write (the device let us read flash and the bytes
+/// are wrong) — never acceptable. `Unreadable` is "we couldn't read it back"
+/// (the device STALLs DFU_UPLOAD even after recovery — some clone/ST bootloader
+/// configs refuse uploads) — not proof of a bad write, so the caller may
+/// downgrade it to a loud warning rather than failing a board that's otherwise
+/// fine.
+pub enum VerifyError {
+    /// Read succeeded but the flash contents differ at `addr`.
+    Mismatch { addr: u32 },
+    /// The device wouldn't let us read flash back (UPLOAD refused/STALLed).
+    Unreadable(String),
+}
+
+impl std::fmt::Display for VerifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerifyError::Mismatch { addr } => write!(f, "verify mismatch at 0x{addr:08x}"),
+            VerifyError::Unreadable(s) => write!(f, "could not read flash back: {s}"),
+        }
+    }
+}
+
 /// A DNLOAD rejection (or post-write poll failure) is the transient timing race
 /// — worth retrying — precisely when the device has *not* latched an error
 /// status. A non-zero bStatus is a genuine refusal we must surface instead.
@@ -328,6 +351,34 @@ const F411_SECTORS: &[(u32, u32)] = &[
 
 pub const BOOT_ADDR: u32 = 0x0800_0000;
 pub const APP_ADDR: u32 = 0x0802_0000;
+
+/// Config storage sector base (F411 S4, 64 KB). `install` erases this to restore
+/// factory defaults, so it never holds firmware — which makes it the safe
+/// scratch area for the self-test: writing and re-erasing it can't disturb the
+/// bootloader (S0) or app (S5+), and it leaves the board in exactly the
+/// factory-default-config state a fresh install would.
+pub const SCRATCH_ADDR: u32 = 0x0801_0000;
+/// Size of the scratch (config) sector — the upper bound on a full self-test.
+pub const SCRATCH_LEN: u32 = 64 * 1024;
+
+/// Build a deterministic, address-dependent test pattern of `len` bytes for the
+/// self-test. Each byte mixes its absolute flash offset through a cheap hash, so
+/// the read-back catches not just stuck/flipped bits but *mis-addressed* reads
+/// or writes (a block landing at the wrong address verifies as a mismatch
+/// rather than sneaking through with all-0xFF or a constant fill). Pure, so the
+/// generator is unit-tested without a device.
+pub fn selftest_pattern(len: usize) -> Vec<u8> {
+    (0..len)
+        .map(|i| {
+            // splitmix-style avalanche of the offset -> well-spread bytes.
+            let mut x = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            x ^= x >> 29;
+            x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            x ^= x >> 27;
+            (x & 0xFF) as u8
+        })
+        .collect()
+}
 
 /// Base addresses of the F411 flash sectors overlapped by `[base, base+len)`.
 /// Pure (no device) so the erase-target selection can be unit-tested — a wrong
@@ -424,6 +475,20 @@ fn find() -> Option<DeviceInfo> {
         .find(|d| d.vendor_id() == DFU_VID && d.product_id() == DFU_PID)
 }
 
+/// Running tally of how much recover-and-retry the write path needed — a direct
+/// measure of link/flash health. Zero on a clean board; a high `block_retries`
+/// (or any `blocks_failed`) points at a marginal USB link or power rather than a
+/// software fault, which is exactly what the self-test surfaces.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct WriteStats {
+    /// Blocks the writer attempted (download data blocks, across all images).
+    pub blocks_written: u32,
+    /// Total recover-and-retry rounds spent across all blocks.
+    pub block_retries: u32,
+    /// Blocks that exhausted their retry budget (i.e. a write that failed).
+    pub blocks_failed: u32,
+}
+
 pub struct Dfu {
     iface: Interface,
     /// Block size for download/upload, taken from the device's DFU functional
@@ -431,6 +496,9 @@ pub struct Dfu {
     xfer: usize,
     /// Timing/retry knobs (defaults + env overrides), resolved at `open`.
     t: Timings,
+    /// Interior-mutability retry tally so the `&self` write path can record how
+    /// much nursing the device needed (read back via [`Dfu::stats`]).
+    stats: std::cell::Cell<WriteStats>,
 }
 
 impl Dfu {
@@ -489,7 +557,23 @@ impl Dfu {
             t.block_retries,
             t.max_polls,
         ));
-        Ok(Dfu { iface, xfer, t })
+        Ok(Dfu {
+            iface,
+            xfer,
+            t,
+            stats: std::cell::Cell::new(WriteStats::default()),
+        })
+    }
+
+    /// The accumulated write retry tally (see [`WriteStats`]).
+    pub fn stats(&self) -> WriteStats {
+        self.stats.get()
+    }
+
+    fn bump_stats(&self, f: impl FnOnce(&mut WriteStats)) {
+        let mut s = self.stats.get();
+        f(&mut s);
+        self.stats.set(s);
     }
 
     fn ctrl(request: u8, value: u16) -> Control {
@@ -609,11 +693,23 @@ impl Dfu {
         }
     }
 
+    /// Reset the default control pipe (best-effort). After an EP0 STALL the
+    /// control endpoint is auto-cleared by the next SETUP per USB spec, but a
+    /// flaky link/host can leave WinUSB's pipe in a sticky halted state; on
+    /// Windows this maps to `WinUsb_ResetPipe`, which clears it. Harmless and
+    /// ignored where unsupported — it's only ever an extra nudge before a retry.
+    fn reset_control_pipe(&self) {
+        // Endpoint 0 = the default (control) pipe used for every DFU transfer.
+        let _ = self.iface.clear_halt(0x00);
+    }
+
     /// Best-effort drive back to a clean idle after a block STALL/upset, ready
-    /// for a retry. First let any in-flight programming finish (the device
-    /// returns to dfuDNLOAD-IDLE on its own once the page write lands), then
-    /// clear a latched error or abort a half-open download.
+    /// for a retry. First reset the control pipe in case the host left it
+    /// halted, then let any in-flight programming finish (the device returns to
+    /// dfuDNLOAD-IDLE on its own once the page write lands), then clear a latched
+    /// error or abort a half-open download.
     fn recover_to_idle(&self) {
+        self.reset_control_pipe();
         let _ = self.poll_until_idle();
         match self.get_status() {
             Ok((status, _, state)) if status != 0 || state == STATE_ERROR => self.clear_status(),
@@ -695,19 +791,25 @@ impl Dfu {
         addr: u32,
         chunk: &[u8],
     ) -> Result<(), String> {
+        self.bump_stats(|s| s.blocks_written += 1);
         let mut attempt = 0u32;
         loop {
             match self.try_download_block(block, addr, chunk) {
                 Ok(()) => return Ok(()),
-                Err(BlockError::Fatal(msg)) => return Err(msg),
+                Err(BlockError::Fatal(msg)) => {
+                    self.bump_stats(|s| s.blocks_failed += 1);
+                    return Err(msg);
+                }
                 Err(BlockError::Transient(msg)) => {
                     if attempt >= self.t.block_retries {
+                        self.bump_stats(|s| s.blocks_failed += 1);
                         return Err(format!(
                             "{msg}; gave up after {} retries",
                             self.t.block_retries
                         ));
                     }
                     attempt += 1;
+                    self.bump_stats(|s| s.block_retries += 1);
                     crate::proto::log(&format!(
                         "dfu: block {block} (addr 0x{addr:08x}) stalled while device busy — \
                          recovering and retrying ({attempt}/{})",
@@ -796,37 +898,71 @@ impl Dfu {
         }
     }
 
-    /// Read flash back via DFU_UPLOAD and compare to `data`. Best-effort: a
-    /// device that refuses UPLOAD returns Err, which the caller may downgrade
-    /// to a warning rather than failing the whole install.
+    /// Read flash back via DFU_UPLOAD and compare to `data`, confirming the
+    /// write actually landed. Returns a typed [`VerifyError`] so the caller can
+    /// tell a genuine `Mismatch` (bad write — must fail) from `Unreadable` (the
+    /// device refuses UPLOAD — not proof of a bad write). A transient UPLOAD
+    /// STALL (the same device-busy/flaky-link race the writer fights) is
+    /// recovered and retried per block before we conclude the read is refused.
     pub fn verify_image<F: FnMut(u64, u64)>(
         &self,
         base: u32,
         data: &[u8],
         mut on_progress: F,
-    ) -> Result<(), String> {
-        self.set_address(base)?;
-        // After set-address the read pointer is `base`; UPLOAD blocks start at
-        // wBlockNum 2 with the same address formula as download.
+    ) -> Result<(), VerifyError> {
+        // Re-arm the read pointer; after set-address UPLOAD wBlockNum 2 maps to
+        // `base` with the same address formula as download. A failure to even
+        // set the address counts as "couldn't read it back".
+        self.set_address(base).map_err(VerifyError::Unreadable)?;
         let total = data.len() as u64;
         let mut done = 0u64;
         let mut buf = vec![0u8; self.xfer];
         for (i, chunk) in data.chunks(self.xfer).enumerate() {
             let block = 2u16 + i as u16;
-            let n = self
-                .iface
-                .control_in_blocking(Self::ctrl(DFU_UPLOAD, block), &mut buf, CTRL_TIMEOUT)
-                .map_err(|e| format!("UPLOAD(block {block}) failed: {e}"))?;
+            let addr = base + (i * self.xfer) as u32;
+            let n = self.upload_block_with_retry(base, block, &mut buf)?;
             if n < chunk.len() || buf[..chunk.len()] != *chunk {
-                return Err(format!(
-                    "verify mismatch at 0x{:08x}",
-                    base + (i * self.xfer) as u32
-                ));
+                return Err(VerifyError::Mismatch { addr });
             }
             done += chunk.len() as u64;
             on_progress(done, total);
         }
         Ok(())
+    }
+
+    /// One UPLOAD (read-back) of `block`, recovering and retrying on a transient
+    /// STALL the same way the writer does — re-arming the address pointer so the
+    /// block still maps to the right flash address. Exhausting the retries means
+    /// the device genuinely won't let us read flash back (`Unreadable`).
+    fn upload_block_with_retry(
+        &self,
+        base: u32,
+        block: u16,
+        buf: &mut [u8],
+    ) -> Result<usize, VerifyError> {
+        let mut attempt = 0u32;
+        loop {
+            match self
+                .iface
+                .control_in_blocking(Self::ctrl(DFU_UPLOAD, block), buf, CTRL_TIMEOUT)
+            {
+                Ok(n) => return Ok(n),
+                Err(e) => {
+                    if attempt >= self.t.block_retries {
+                        return Err(VerifyError::Unreadable(format!(
+                            "UPLOAD(block {block}) failed: {e}; gave up after {} retries",
+                            self.t.block_retries
+                        )));
+                    }
+                    attempt += 1;
+                    self.recover_to_idle();
+                    self.sleep_ms(self.t.retry_backoff_ms.saturating_mul(attempt as u64));
+                    // Re-arm the read pointer; if even that fails the upload is
+                    // not coming back.
+                    self.set_address(base).map_err(VerifyError::Unreadable)?;
+                }
+            }
+        }
     }
 
     /// Leave DFU: point at the new firmware base and issue a zero-length
@@ -941,6 +1077,40 @@ mod tests {
         assert_eq!(Stage::WriteBoot.token(), "write-boot");
         assert_eq!(Stage::WriteApp.token(), "write-app");
         assert_eq!(Stage::Verify.token(), "verify");
+        assert_eq!(Stage::Test.token(), "test");
         assert_eq!(Stage::Done.token(), "done");
+    }
+
+    #[test]
+    fn selftest_pattern_is_deterministic_addressed_and_well_spread() {
+        // Deterministic: same length -> identical bytes (so the writer and the
+        // verifier generate the same expected image).
+        assert_eq!(selftest_pattern(4096), selftest_pattern(4096));
+        // Address-dependent: a prefix of a longer pattern equals the shorter
+        // one (byte i depends only on offset i), so a block written at the
+        // wrong offset verifies as a mismatch.
+        assert_eq!(selftest_pattern(64), selftest_pattern(4096)[..64]);
+        // Not a constant fill (would hide stuck bits / a blank sector): a 1 KB
+        // run uses a broad spread of byte values, not one repeated value.
+        let p = selftest_pattern(1024);
+        let distinct = p.iter().collect::<std::collections::BTreeSet<_>>().len();
+        assert!(
+            distinct > 100,
+            "pattern too uniform: {distinct} distinct bytes"
+        );
+        assert_eq!(selftest_pattern(0), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn scratch_region_is_the_config_sector_and_never_touches_firmware() {
+        // The self-test scratch must be exactly the config sector (S4) so it
+        // can't disturb the bootloader (S0) or app (S5+).
+        assert_eq!(SCRATCH_ADDR, 0x0801_0000);
+        assert_eq!(
+            overlapping_sectors(SCRATCH_ADDR, SCRATCH_LEN),
+            vec![0x0801_0000]
+        );
+        assert!(!overlapping_sectors(SCRATCH_ADDR, SCRATCH_LEN).contains(&BOOT_ADDR));
+        assert!(!overlapping_sectors(SCRATCH_ADDR, SCRATCH_LEN).contains(&APP_ADDR));
     }
 }

@@ -2,10 +2,18 @@
 //! `DfuInstallSession`):
 //!
 //! ```text
-//! freejoyx-flash probe   --board f411 [--check-driver] [--verbose]
-//! freejoyx-flash install --board f411 --boot <bootBin> --app <appBin>
-//! freejoyx-flash bind    --board f411
+//! freejoyx-flash probe    --board f411 [--check-driver] [--verbose]
+//! freejoyx-flash install  --board f411 --boot <bootBin> --app <appBin>
+//! freejoyx-flash bind     --board f411
+//! freejoyx-flash selftest --board f411 [--level quick|full]
 //! ```
+//!
+//! `selftest` is a non-destructive flash exercise: it erases the config scratch
+//! sector, writes a known pattern (a few KB for `quick`, the whole 64 KB sector
+//! for `full`), reads it back, and re-erases it — never touching the bootloader
+//! or app. It reuses the exact erase/write/verify path an install uses, so a
+//! pass means a real install would write cleanly, and the retry tally it reports
+//! is a direct read on USB-link / power health.
 //!
 //! `probe` reports `present` / `needs-driver` / `absent`. The bare form is the
 //! cheap nusb-only check (the configurator's every-tick poll). `--check-driver`
@@ -38,13 +46,17 @@ fn main() {
 fn real_main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        proto::error("usage", "expected `probe` or `install` subcommand");
+        proto::error(
+            "usage",
+            "expected `probe`, `install`, `selftest`, or `bind` subcommand",
+        );
         return 2;
     }
 
     match args[0].as_str() {
         "probe" => cmd_probe(&args),
         "install" => cmd_install(&args),
+        "selftest" => cmd_selftest(&args),
         // Install/repair the WinUSB binding by itself (the same step `install`
         // runs first). Surfaced by the configurator's "Install WinUSB driver"
         // action when a probe reports `needs-driver`.
@@ -184,6 +196,19 @@ fn cmd_install(args: &[String]) -> i32 {
     }
 }
 
+/// How many times to re-open the device and redo the whole erase+write+verify
+/// sequence when an attempt fails on a transient (link/power) wobble. A fresh
+/// re-open clears a wedged WinUSB pipe and a re-erase wipes any half-written
+/// sector, so a second pass often sails through where one block stalled out the
+/// first. Overridable for a really stubborn board. `FREEJOYX_FLASH_INSTALL_ATTEMPTS`.
+fn install_attempts() -> u32 {
+    std::env::var("FREEJOYX_FLASH_INSTALL_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(3)
+}
+
 fn run_install(boot: &[u8], app: &[u8]) -> Result<(), String> {
     proto::log(&format!(
         "install: bootloader {} bytes -> 0x{BOOT_ADDR:08x}, app {} bytes -> 0x{APP_ADDR:08x}",
@@ -193,6 +218,43 @@ fn run_install(boot: &[u8], app: &[u8]) -> Result<(), String> {
     proto::stage(Stage::BindDriver);
     driver::ensure_reachable()?;
 
+    // Each attempt re-opens the device from scratch: a failed write leaves a
+    // wedged pipe / partially-written sector, and a clean re-open + re-erase is
+    // the strongest recovery available on Windows (where a USB port reset isn't).
+    let attempts = install_attempts();
+    let mut last_err = String::new();
+    for attempt in 1..=attempts {
+        if attempt > 1 {
+            proto::log(&format!(
+                "retrying the whole install from a fresh DFU session (attempt {attempt}/{attempts})"
+            ));
+        }
+        match install_once(boot, app) {
+            Ok(dfu) => {
+                // Only now manifest + reset — leaving DFU on a failed attempt
+                // would strand a half-written board. With manual BOOT0 entry the
+                // user still has to release BOOT0 and replug; the configurator's
+                // instructions cover that.
+                dfu.leave();
+                return Ok(());
+            }
+            Err(e) => {
+                proto::log(&format!("install attempt {attempt} failed: {e}"));
+                last_err = e;
+            }
+        }
+    }
+    Err(format!(
+        "{last_err} (after {attempts} attempt(s) — this usually means a flaky USB \
+         cable/port or insufficient power to the board; try a different short cable \
+         and a rear USB 2.0 port, or flash with an ST-Link)"
+    ))
+}
+
+/// One full erase+write+verify pass on a freshly opened device. Returns the open
+/// [`Dfu`] (still in DFU, not yet `leave()`n) on success so the caller can
+/// manifest only when the whole install — verify included — has passed.
+fn install_once(boot: &[u8], app: &[u8]) -> Result<Dfu, String> {
     let dfu = open_with_retry()?;
     dfu.to_idle()?;
 
@@ -208,23 +270,163 @@ fn run_install(boot: &[u8], app: &[u8]) -> Result<(), String> {
     proto::stage(Stage::WriteApp);
     dfu.write_image(APP_ADDR, app, proto::progress)?;
 
+    // Read both images back and confirm they landed. A genuine mismatch fails
+    // the attempt (so the retry re-erases and rewrites); a board that simply
+    // refuses UPLOAD can't be confirmed either way, so we keep the install but
+    // warn loudly rather than claim a success we couldn't check.
     proto::stage(Stage::Verify);
-    verify_soft(&dfu, BOOT_ADDR, boot, "bootloader");
-    verify_soft(&dfu, APP_ADDR, app, "app");
+    verify_or_fail(&dfu, BOOT_ADDR, boot, "bootloader")?;
+    verify_or_fail(&dfu, APP_ADDR, app, "app")?;
 
-    // Manifest + reset. With manual BOOT0 entry the user still has to release
-    // BOOT0 and replug; that's covered by the configurator's instructions.
-    dfu.leave();
-    Ok(())
+    let s = dfu.stats();
+    if s.block_retries > 0 {
+        proto::log(&format!(
+            "note: needed {} block retr{} across {} written block(s) — the link/power \
+             is marginal but the write verified",
+            s.block_retries,
+            if s.block_retries == 1 { "y" } else { "ies" },
+            s.blocks_written,
+        ));
+    }
+    Ok(dfu)
 }
 
-/// Read-back verify, downgraded to a warning on failure: some devices/states
-/// refuse UPLOAD, and a write that the device itself accepted shouldn't be
-/// reported as a hard failure just because we couldn't read it back.
-fn verify_soft(dfu: &Dfu, base: u32, data: &[u8], what: &str) {
+/// Read-back verify that gates success. A `Mismatch` is a real bad write — fail
+/// the attempt so it's re-erased and rewritten. `Unreadable` (the device refuses
+/// UPLOAD) isn't proof of a bad write, so it can't be a hard failure on its own
+/// — but we surface it as a prominent warning so a board that "installed" yet
+/// won't boot isn't a silent mystery.
+fn verify_or_fail(dfu: &Dfu, base: u32, data: &[u8], what: &str) -> Result<(), String> {
+    use freejoyx_flash::dfuse::VerifyError;
     match dfu.verify_image(base, data, proto::progress) {
-        Ok(()) => proto::log(&format!("{what} verified")),
-        Err(e) => proto::log(&format!("{what} verify skipped: {e}")),
+        Ok(()) => {
+            proto::log(&format!(
+                "{what} verified ({} bytes read back OK)",
+                data.len()
+            ));
+            Ok(())
+        }
+        Err(VerifyError::Mismatch { addr }) => Err(format!(
+            "{what} verify FAILED — flash differs at 0x{addr:08x}"
+        )),
+        Err(VerifyError::Unreadable(e)) => {
+            proto::log(&format!(
+                "WARNING: could not verify {what} — {e}. The write was accepted but this \
+                 board won't allow read-back, so it can't be confirmed. If the board \
+                 doesn't enumerate after you replug it, reflash or use an ST-Link."
+            ));
+            Ok(())
+        }
+    }
+}
+
+fn cmd_selftest(args: &[String]) -> i32 {
+    let board = flag(args, "--board").unwrap_or_else(|| "f411".to_string());
+    if board != "f411" {
+        proto::error("board", "only --board f411 is supported");
+        return 2;
+    }
+    let level = flag(args, "--level").unwrap_or_else(|| "quick".to_string());
+    let bytes = match level.as_str() {
+        // A few blocks: a fast "is the link sane?" check.
+        "quick" => 8 * 1024,
+        // The whole config scratch sector: stresses the write path about as hard
+        // as a real bootloader+app install does.
+        "full" => dfuse::SCRATCH_LEN as usize,
+        other => {
+            proto::error(
+                "usage",
+                &format!("unknown --level `{other}` (use quick or full)"),
+            );
+            return 2;
+        }
+    };
+    match run_selftest(bytes, &level) {
+        Ok(()) => {
+            proto::stage(Stage::Done);
+            0
+        }
+        Err(msg) => {
+            proto::error("selftest", &msg);
+            1
+        }
+    }
+}
+
+/// Non-destructive flash exercise on the config scratch sector: erase, write a
+/// known pattern, read it back, then re-erase so the board is left in the same
+/// factory-default-config state a fresh install leaves. Reuses the real
+/// erase/write/verify path, so a pass means an install would write cleanly; the
+/// retry tally is the headline diagnostic.
+fn run_selftest(bytes: usize, level: &str) -> Result<(), String> {
+    use freejoyx_flash::dfuse::VerifyError;
+
+    proto::log(&format!(
+        "selftest ({level}): exercising {bytes} bytes on the config scratch sector \
+         0x{:08x} (does not touch the bootloader or app)",
+        dfuse::SCRATCH_ADDR,
+    ));
+    proto::stage(Stage::BindDriver);
+    driver::ensure_reachable()?;
+
+    let dfu = open_with_retry()?;
+    dfu.to_idle()?;
+
+    let pattern = dfuse::selftest_pattern(bytes);
+
+    proto::stage(Stage::Erase);
+    proto::log("erasing scratch sector");
+    dfu.erase_region(dfuse::SCRATCH_ADDR, bytes as u32)?;
+
+    proto::stage(Stage::Test);
+    proto::log("writing test pattern");
+    dfu.write_image(dfuse::SCRATCH_ADDR, &pattern, proto::progress)?;
+
+    proto::stage(Stage::Verify);
+    proto::log("reading the test pattern back");
+    let verify = dfu.verify_image(dfuse::SCRATCH_ADDR, &pattern, proto::progress);
+
+    // Always leave the scratch sector erased again so a tested board comes up
+    // with factory-default config, exactly as after an install. Best-effort —
+    // a failure here doesn't change the verdict but is worth noting.
+    proto::stage(Stage::Erase);
+    proto::log("restoring scratch sector (erasing test pattern)");
+    if let Err(e) = dfu.erase_region(dfuse::SCRATCH_ADDR, bytes as u32) {
+        proto::log(&format!("note: could not re-erase scratch sector: {e}"));
+    }
+
+    let s = dfu.stats();
+    proto::log(&format!(
+        "selftest stats: {} block(s) written, {} retr{}, {} failed",
+        s.blocks_written,
+        s.block_retries,
+        if s.block_retries == 1 { "y" } else { "ies" },
+        s.blocks_failed,
+    ));
+
+    match verify {
+        Ok(()) => {
+            if s.block_retries == 0 {
+                proto::log(
+                    "PASS: wrote and read back cleanly with no retries — link looks healthy",
+                );
+            } else {
+                proto::log(
+                    "PASS: data verified, but the write needed retries — the board flashes \
+                     but the USB link/power is marginal (consider a different cable / rear \
+                     USB 2.0 port)",
+                );
+            }
+            Ok(())
+        }
+        Err(VerifyError::Mismatch { addr }) => Err(format!(
+            "FAIL: read-back differs at 0x{addr:08x} — data is being corrupted on the way \
+             to or from the chip (suspect the USB cable/port or board power)"
+        )),
+        Err(VerifyError::Unreadable(e)) => Err(format!(
+            "INCONCLUSIVE: the write was accepted but the board refused read-back ({e}). \
+             Writes can't be verified on this board over USB DFU; use an ST-Link to confirm."
+        )),
     }
 }
 
