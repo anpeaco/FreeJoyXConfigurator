@@ -24,6 +24,9 @@ pub enum Stage {
     WriteBoot,
     WriteApp,
     Verify,
+    /// Non-destructive flash self-test (write+read-back a scratch sector). Used
+    /// by the `selftest` subcommand, never by `install`.
+    Test,
     Done,
 }
 
@@ -35,6 +38,7 @@ impl Stage {
             Stage::WriteBoot => "write-boot",
             Stage::WriteApp => "write-app",
             Stage::Verify => "verify",
+            Stage::Test => "test",
             Stage::Done => "done",
         }
     }
