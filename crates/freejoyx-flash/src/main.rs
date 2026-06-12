@@ -3,9 +3,14 @@
 //!
 //! ```text
 //! freejoyx-flash probe   --board f411 [--check-driver] [--verbose]
-//! freejoyx-flash install --board f411 --boot <bootBin> --app <appBin>
+//! freejoyx-flash install --board f411 [--boot <bootBin>] [--app <appBin>]
+//! freejoyx-flash erase   --board f411
 //! freejoyx-flash bind    --board f411
 //! ```
+//!
+//! `erase` mass-erases the whole chip (bootloader + config + app) and leaves it
+//! blank but still in DFU, so an install can follow immediately. Destructive --
+//! the configurator gates it behind a strong confirmation.
 //!
 //! `probe` reports `present` / `needs-driver` / `absent`. The bare form is the
 //! cheap nusb-only check (the configurator's every-tick poll). `--check-driver`
@@ -54,13 +59,19 @@ fn main() {
 fn real_main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        proto::error("usage", "expected `probe` or `install` subcommand");
+        proto::error(
+            "usage",
+            "expected a subcommand: probe / install / erase / bind / leave",
+        );
         return 2;
     }
 
     match args[0].as_str() {
         "probe" => cmd_probe(&args),
         "install" => cmd_install(&args),
+        // Mass-erase the whole chip (clear-chip recovery / wipe). Destructive --
+        // the configurator gates it behind a strong confirmation.
+        "erase" => cmd_erase(&args),
         // Install/repair the WinUSB binding by itself (the same step `install`
         // runs first). Surfaced by the configurator's "Install WinUSB driver"
         // action when a probe reports `needs-driver`.
@@ -174,45 +185,74 @@ fn cmd_leave(args: &[String]) -> i32 {
     }
 }
 
+/// Mass-erase the whole chip (bootloader + config + app), leaving it blank but
+/// still in DFU so an install can run straight after. Destructive: the board
+/// won't run until firmware is reinstalled. The ROM DFU bootloader survives (it
+/// lives in system memory, not user flash), so the chip stays recoverable.
+fn cmd_erase(args: &[String]) -> i32 {
+    let board = flag(args, "--board").unwrap_or_default();
+    if board != "f411" {
+        proto::error("board", "only --board f411 is supported");
+        return 2;
+    }
+    let r = (|| -> Result<(), String> {
+        driver::ensure_reachable()?;
+        let dfu = open_with_retry(CliTiming::default())?;
+        dfu.to_idle()?;
+        proto::stage(Stage::Erase);
+        proto::log("mass-erasing the chip (bootloader, config and app)…");
+        dfu.erase_all()?;
+        // Deliberately do NOT leave() -- keep the blank chip in DFU so an install
+        // can follow immediately without re-entering DFU.
+        proto::log(
+            "erase complete — the board is blank and still in DFU; \
+             install firmware to make it usable",
+        );
+        Ok(())
+    })();
+    match r {
+        Ok(()) => {
+            proto::stage(Stage::Done);
+            0
+        }
+        Err(e) => {
+            proto::error("erase", &e);
+            1
+        }
+    }
+}
+
 fn cmd_install(args: &[String]) -> i32 {
     let board = flag(args, "--board").unwrap_or_default();
     if board != "f411" {
         proto::error("board", "only --board f411 is supported");
         return 2;
     }
-    let boot_path = match flag(args, "--boot") {
-        Some(p) => p,
-        None => {
-            proto::error("usage", "missing --boot <path>");
-            return 2;
-        }
-    };
-    let app_path = match flag(args, "--app") {
-        Some(p) => p,
-        None => {
-            proto::error("usage", "missing --app <path>");
-            return 2;
-        }
-    };
 
-    let boot = match std::fs::read(&boot_path) {
-        Ok(b) => b,
-        Err(e) => {
-            proto::error("file", &format!("can't read bootloader {boot_path}: {e}"));
-            return 1;
-        }
-    };
-    let app = match std::fs::read(&app_path) {
-        Ok(b) => b,
-        Err(e) => {
-            proto::error("file", &format!("can't read app {app_path}: {e}"));
-            return 1;
-        }
-    };
-    if boot.is_empty() || app.is_empty() {
-        proto::error("file", "bootloader or app binary is empty");
-        return 1;
+    // --boot / --app are now independently optional so the configurator can
+    // install the bootloader only, the app only, or both (the Boot/App/Both
+    // selection in the DFU dialog). At least one is required.
+    let boot_path = flag(args, "--boot");
+    let app_path = flag(args, "--app");
+    if boot_path.is_none() && app_path.is_none() {
+        proto::error("usage", "need at least one of --boot <path> / --app <path>");
+        return 2;
     }
+
+    let boot = match boot_path {
+        Some(p) => match read_image(&p, "bootloader") {
+            Ok(b) => Some(b),
+            Err(code) => return code,
+        },
+        None => None,
+    };
+    let app = match app_path {
+        Some(p) => match read_image(&p, "app") {
+            Ok(b) => Some(b),
+            Err(code) => return code,
+        },
+        None => None,
+    };
 
     // Optional DfuSe timing overrides from the configurator's Advanced section.
     // Absent flags keep the helper's proven defaults, so a bare `install` is
@@ -223,9 +263,11 @@ fn cmd_install(args: &[String]) -> i32 {
         transfer_timeout_ms: flag_u64(args, "--transfer-timeout-ms"),
         retries: flag_u64(args, "--retries").map(|v| v as u32),
         settle_ms: flag_u64(args, "--settle-ms"),
+        idle_confirmations: flag_u64(args, "--idle-confirmations").map(|v| v as u32),
+        min_block_program_ms: flag_u64(args, "--min-block-ms"),
     };
 
-    match run_install(&boot, &app, timing) {
+    match run_install(boot.as_deref(), app.as_deref(), timing) {
         Ok(()) => {
             proto::stage(Stage::Done);
             0
@@ -237,33 +279,102 @@ fn cmd_install(args: &[String]) -> i32 {
     }
 }
 
-fn run_install(boot: &[u8], app: &[u8], timing: CliTiming) -> Result<(), String> {
-    proto::log(&format!(
-        "install: bootloader {} bytes -> 0x{BOOT_ADDR:08x}, app {} bytes -> 0x{APP_ADDR:08x}",
-        boot.len(),
-        app.len(),
-    ));
+/// Read a firmware image, mapping failures onto the helper's error protocol +
+/// exit code. An empty file is rejected: a 0-byte .bin would otherwise "install"
+/// successfully while flashing nothing.
+fn read_image(path: &str, what: &str) -> Result<Vec<u8>, i32> {
+    match std::fs::read(path) {
+        Ok(b) if b.is_empty() => {
+            proto::error("file", &format!("{what} binary is empty: {path}"));
+            Err(1)
+        }
+        Ok(b) => Ok(b),
+        Err(e) => {
+            proto::error("file", &format!("can't read {what} {path}: {e}"));
+            Err(1)
+        }
+    }
+}
+
+/// Which flash regions an install touches, derived from which images the caller
+/// supplied. The config sector is erased (factory reset) ONLY when the app is
+/// (re)written -- the config layout follows the app's wire format, so a new app
+/// must not inherit an old config. A boot-only install therefore leaves the
+/// running app AND its config intact (the "just push the new bootloader" case);
+/// an app-only install factory-resets config but keeps the bootloader.
+#[derive(Debug, PartialEq, Eq)]
+struct InstallPlan {
+    write_boot: bool,
+    write_app: bool,
+    erase_config: bool,
+}
+
+fn plan_install(has_boot: bool, has_app: bool) -> InstallPlan {
+    InstallPlan {
+        write_boot: has_boot,
+        write_app: has_app,
+        erase_config: has_app,
+    }
+}
+
+fn run_install(boot: Option<&[u8]>, app: Option<&[u8]>, timing: CliTiming) -> Result<(), String> {
+    let plan = plan_install(boot.is_some(), app.is_some());
+
+    match (boot, app) {
+        (Some(b), Some(a)) => proto::log(&format!(
+            "install: bootloader {} bytes -> 0x{BOOT_ADDR:08x}, app {} bytes -> 0x{APP_ADDR:08x}",
+            b.len(),
+            a.len(),
+        )),
+        (Some(b), None) => proto::log(&format!(
+            "install: bootloader {} bytes -> 0x{BOOT_ADDR:08x} only (app + config preserved)",
+            b.len(),
+        )),
+        (None, Some(a)) => proto::log(&format!(
+            "install: app {} bytes -> 0x{APP_ADDR:08x} only (config reset, bootloader preserved)",
+            a.len(),
+        )),
+        (None, None) => unreachable!("cmd_install rejects an install with neither image"),
+    }
+
     proto::stage(Stage::BindDriver);
     driver::ensure_reachable()?;
 
     let dfu = open_with_retry(timing)?;
     dfu.to_idle()?;
 
+    // Erase only the sectors we're about to (re)write. unwrap()s are guarded by
+    // the plan: write_boot == boot.is_some(), write_app == app.is_some().
     proto::stage(Stage::Erase);
-    proto::log("erasing bootloader, config and app sectors");
-    dfu.erase_region(BOOT_ADDR, boot.len() as u32)?;
-    dfu.erase_region(CONFIG_ADDR, 1)?; // wipe config -> factory defaults
-    dfu.erase_region(APP_ADDR, app.len() as u32)?;
+    if plan.write_boot {
+        proto::log("erasing bootloader sector");
+        dfu.erase_region(BOOT_ADDR, boot.unwrap().len() as u32)?;
+    }
+    if plan.erase_config {
+        proto::log("erasing config sector (factory reset)");
+        dfu.erase_region(CONFIG_ADDR, 1)?;
+    }
+    if plan.write_app {
+        proto::log("erasing app sectors");
+        dfu.erase_region(APP_ADDR, app.unwrap().len() as u32)?;
+    }
 
-    proto::stage(Stage::WriteBoot);
-    dfu.write_image(BOOT_ADDR, boot, proto::progress)?;
-
-    proto::stage(Stage::WriteApp);
-    dfu.write_image(APP_ADDR, app, proto::progress)?;
+    if plan.write_boot {
+        proto::stage(Stage::WriteBoot);
+        dfu.write_image(BOOT_ADDR, boot.unwrap(), proto::progress)?;
+    }
+    if plan.write_app {
+        proto::stage(Stage::WriteApp);
+        dfu.write_image(APP_ADDR, app.unwrap(), proto::progress)?;
+    }
 
     proto::stage(Stage::Verify);
-    verify_soft(&dfu, BOOT_ADDR, boot, "bootloader")?;
-    verify_soft(&dfu, APP_ADDR, app, "app")?;
+    if let Some(b) = boot {
+        verify_soft(&dfu, BOOT_ADDR, b, "bootloader")?;
+    }
+    if let Some(a) = app {
+        verify_soft(&dfu, APP_ADDR, a, "app")?;
+    }
 
     // Manifest + reset. With manual BOOT0 entry the user still has to release
     // BOOT0 and replug; that's covered by the configurator's instructions.
@@ -332,4 +443,41 @@ fn has_flag(args: &[String], name: &str) -> bool {
 /// Parse the unsigned value following `name`, if present and valid.
 fn flag_u64(args: &[String], name: &str) -> Option<u64> {
     flag(args, name).and_then(|v| v.trim().parse::<u64>().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn both_images_writes_all_and_resets_config() {
+        let p = plan_install(true, true);
+        assert!(p.write_boot);
+        assert!(p.write_app);
+        assert!(p.erase_config);
+    }
+
+    #[test]
+    fn boot_only_preserves_app_and_config() {
+        // The "push just the new bootloader" case: must NOT touch the running
+        // app or its config.
+        let p = plan_install(true, false);
+        assert!(p.write_boot);
+        assert!(!p.write_app);
+        assert!(
+            !p.erase_config,
+            "boot-only must keep the running app's config"
+        );
+    }
+
+    #[test]
+    fn app_only_resets_config_keeps_bootloader() {
+        let p = plan_install(false, true);
+        assert!(!p.write_boot);
+        assert!(p.write_app);
+        assert!(
+            p.erase_config,
+            "a new app's config layout may differ -> reset"
+        );
+    }
 }

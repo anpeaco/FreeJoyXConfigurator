@@ -265,6 +265,21 @@ struct Timings {
     /// device's larger reported poll), so this still allows ample time for a
     /// slow 128 KB sector erase. `FREEJOYX_FLASH_MAX_POLLS` (default 1000).
     max_polls: u32,
+    /// Require the device to report idle on this many CONSECUTIVE GETSTATUS
+    /// polls before we trust it. A clone can report DNLOAD-IDLE for a single
+    /// poll while flash is still programming, then go busy again -- which is
+    /// exactly what STALLs the next block's DNLOAD (anpeaco/FreeJoyXConfiguratorQt
+    /// #80: a premature idle, then a STALL, then a retry that corrupts the page).
+    /// Configurator "Idle confirmations" (--idle-confirmations); floored to >= 1.
+    idle_confirmations: u32,
+    /// Minimum programming window per data block, enforced ONLY when the device
+    /// claimed idle without ever reporting a busy state -- a clone lying "done"
+    /// instantly (bwPollTimeout 0, immediate DNLOAD-IDLE). Genuine silicon that
+    /// reports DNBUSY + a real bwPollTimeout paced us already and is NOT slowed.
+    /// Covers the F411 2 KB page-program time with margin so we never fire the
+    /// next block into still-busy flash. Configurator "Min block program"
+    /// (--min-block-ms).
+    min_block_program_ms: u64,
     /// Pause after each data block download (in addition to the device-paced
     /// status polling). 0 on genuine silicon; a few ms helps flaky hubs.
     /// Configurator "Inter-block delay". `FREEJOYX_FLASH_DNLOAD_DELAY_MS` (0).
@@ -287,6 +302,11 @@ impl Timings {
             retry_backoff_ms: env_u64("FREEJOYX_FLASH_RETRY_BACKOFF_MS", 25),
             block_retries: env_u64("FREEJOYX_FLASH_BLOCK_RETRIES", 4) as u32,
             max_polls: env_u64("FREEJOYX_FLASH_MAX_POLLS", 1000) as u32,
+            // Baseline only -- the configurator drives these two from the
+            // Advanced section's timing preset (--idle-confirmations /
+            // --min-block-ms), NOT from the environment.
+            idle_confirmations: 2,
+            min_block_program_ms: 20,
             dnload_delay_ms: env_u64("FREEJOYX_FLASH_DNLOAD_DELAY_MS", 0),
             transfer_timeout_ms: env_u64("FREEJOYX_FLASH_XFER_TIMEOUT_MS", 5000),
             leave_settle_ms: env_u64("FREEJOYX_FLASH_LEAVE_SETTLE_MS", 0),
@@ -321,6 +341,12 @@ impl Timings {
             // count-bounded loop while honouring the configurator's ms value.
             self.max_polls = (v / self.poll_floor_ms.max(1)).max(1) as u32;
         }
+        if let Some(v) = o.idle_confirmations {
+            self.idle_confirmations = v.max(1); // never disable the idle check
+        }
+        if let Some(v) = o.min_block_program_ms {
+            self.min_block_program_ms = v;
+        }
     }
 }
 
@@ -334,6 +360,8 @@ pub struct CliTiming {
     pub transfer_timeout_ms: Option<u64>,
     pub retries: Option<u32>,
     pub settle_ms: Option<u64>,
+    pub idle_confirmations: Option<u32>,
+    pub min_block_program_ms: Option<u64>,
 }
 
 /// Why a single block download didn't complete, so the caller can decide
@@ -379,6 +407,10 @@ const F411_SECTORS: &[(u32, u32)] = &[
 
 pub const BOOT_ADDR: u32 = 0x0800_0000;
 pub const APP_ADDR: u32 = 0x0802_0000;
+
+/// Full span of the F411 user flash (S0 base .. S7 end) = 512 KB. Used to
+/// mass-erase the whole chip.
+pub const FLASH_SPAN: u32 = 0x0008_0000;
 
 /// Base addresses of the F411 flash sectors overlapped by `[base, base+len)`.
 /// Pure (no device) so the erase-target selection can be unit-tested — a wrong
@@ -558,6 +590,7 @@ impl Dfu {
         crate::proto::log(&format!(
             "dfu: timings poll_floor={}ms pre_status={}ms settle={}ms \
              retry_backoff={}ms block_retries={} max_polls={} \
+             idle_confirms={} min_block={}ms \
              dnload_delay={}ms xfer_timeout={}ms leave_settle={}ms",
             t.poll_floor_ms,
             t.pre_status_settle_ms,
@@ -565,6 +598,8 @@ impl Dfu {
             t.retry_backoff_ms,
             t.block_retries,
             t.max_polls,
+            t.idle_confirmations,
+            t.min_block_program_ms,
             t.dnload_delay_ms,
             t.transfer_timeout_ms,
             t.leave_settle_ms,
@@ -653,23 +688,46 @@ impl Dfu {
         Ok(())
     }
 
-    /// Poll GETSTATUS until the device leaves the busy/sync states, honouring
-    /// the device-reported bwPollTimeout (floored by `poll_floor_ms`) between
-    /// polls. Returns a typed error so callers can tell a transient timeout
-    /// from a latched DFU error.
-    fn poll_until_idle(&self) -> Result<(), WaitError> {
+    /// Poll GETSTATUS until the device is *stably* idle, honouring the
+    /// device-reported bwPollTimeout (floored by `poll_floor_ms`) between polls.
+    /// Returns `Ok(saw_busy)` -- whether a busy/sync state was observed at any
+    /// point -- so the caller can tell an honestly-paced device (saw_busy) from a
+    /// clone that reports idle instantly (the liar that STALLs the next block).
+    /// A typed error distinguishes a transient timeout from a latched DFU error.
+    ///
+    /// "Stably idle" = `idle_confirmations` CONSECUTIVE idle reports. A clone can
+    /// report DNLOAD-IDLE for one poll mid-program and then go busy again; a
+    /// single idle would let us fire the next DNLOAD into still-busy flash. The
+    /// re-confirm gap (poll_floor) is where such a device flips back to busy and
+    /// resets the streak, so only a genuinely-settled device passes.
+    fn poll_until_idle(&self) -> Result<bool, WaitError> {
+        let mut consecutive_idle = 0u32;
+        let mut saw_busy = false;
         for _ in 0..self.t.max_polls {
             let (status, poll, state) = self.get_status().map_err(WaitError::Io)?;
             if status != 0 {
                 return Err(WaitError::DfuStatus { status, state });
             }
             match state {
+                STATE_DNLOAD_IDLE | STATE_DFU_IDLE => {
+                    consecutive_idle += 1;
+                    if consecutive_idle >= self.t.idle_confirmations {
+                        return Ok(saw_busy);
+                    }
+                    // Re-confirm after a short gap; a momentarily-idle clone
+                    // reports busy again here, resetting the streak.
+                    self.sleep_ms(self.t.poll_floor_ms);
+                }
                 STATE_DNBUSY | STATE_DNLOAD_SYNC | STATE_MANIFEST_SYNC => {
+                    saw_busy = true;
+                    consecutive_idle = 0;
                     self.sleep_ms((poll as u64).max(self.t.poll_floor_ms));
                 }
-                STATE_DNLOAD_IDLE | STATE_DFU_IDLE => return Ok(()),
                 STATE_ERROR => return Err(WaitError::DfuStatus { status, state }),
-                _ => self.sleep_ms((poll as u64).max(self.t.poll_floor_ms)),
+                _ => {
+                    consecutive_idle = 0;
+                    self.sleep_ms((poll as u64).max(self.t.poll_floor_ms));
+                }
             }
         }
         Err(WaitError::Timeout)
@@ -678,15 +736,17 @@ impl Dfu {
     /// Convenience wrapper for callers (set-address, erase, leave) that only
     /// need a flat error string and treat any non-idle outcome as fatal.
     fn wait_idle(&self) -> Result<(), String> {
-        self.poll_until_idle().map_err(|e| match e {
-            WaitError::Io(s) => s,
-            WaitError::Timeout => "timed out waiting for DFU device".into(),
-            WaitError::DfuStatus { status, state } => format!(
-                "DFU status error {} (0x{status:02x}) in state {} (0x{state:02x})",
-                dfu_status_name(status),
-                dfu_state_name(state),
-            ),
-        })
+        self.poll_until_idle()
+            .map(|_saw_busy| ())
+            .map_err(|e| match e {
+                WaitError::Io(s) => s,
+                WaitError::Timeout => "timed out waiting for DFU device".into(),
+                WaitError::DfuStatus { status, state } => format!(
+                    "DFU status error {} (0x{status:02x}) in state {} (0x{state:02x})",
+                    dfu_status_name(status),
+                    dfu_state_name(state),
+                ),
+            })
     }
 
     fn sleep_ms(&self, ms: u64) {
@@ -737,6 +797,14 @@ impl Dfu {
             self.sleep_ms(self.t.post_op_settle_ms);
         }
         Ok(())
+    }
+
+    /// Mass-erase the entire F411 user flash (every sector: bootloader, config
+    /// and app). Leaves the chip blank. The ROM DFU bootloader lives in system
+    /// memory, not user flash, so the board still enters DFU and can be
+    /// reinstalled afterwards.
+    pub fn erase_all(&self) -> Result<(), String> {
+        self.erase_region(BOOT_ADDR, FLASH_SPAN)
     }
 
     /// Download `data` to flash starting at `base`. Calls `on_progress(done,
@@ -821,6 +889,7 @@ impl Dfu {
     /// programming, then poll to completion. Classifies any failure as
     /// transient (retryable) or fatal for `write_block_with_retry`.
     fn try_download_block(&self, block: u16, addr: u32, chunk: &[u8]) -> Result<(), BlockError> {
+        let started = std::time::Instant::now();
         if let Err(e) = self.dnload(block, chunk) {
             // The DNLOAD was refused — commonly an EP0 STALL. The STALL is
             // auto-cleared by this next SETUP, so GETSTATUS still reports the
@@ -834,7 +903,22 @@ impl Dfu {
         // block (which would race the next DNLOAD into a busy flash).
         self.sleep_ms(self.t.pre_status_settle_ms);
         match self.poll_until_idle() {
-            Ok(()) => {
+            Ok(saw_busy) => {
+                // The crux of the #80 fix: if the device claimed idle without
+                // EVER reporting a busy state, it lied "done" instantly (clone
+                // bootloader, bwPollTimeout 0). Flash is almost certainly still
+                // programming, so firing the next block now is what STALLs it --
+                // and the STALL's retry then re-programs the page and corrupts it
+                // (the verify mismatch at the retried block's address). Enforce a
+                // minimum programming window in that case. An honestly-paced
+                // device (saw_busy) already waited via bwPollTimeout and is not
+                // slowed.
+                if !saw_busy {
+                    let elapsed = started.elapsed().as_millis() as u64;
+                    if elapsed < self.t.min_block_program_ms {
+                        self.sleep_ms(self.t.min_block_program_ms - elapsed);
+                    }
+                }
                 // Unconditional settle even once it claims idle, for clone
                 // flash that signals done a touch early.
                 self.sleep_ms(self.t.post_op_settle_ms);
@@ -998,6 +1082,17 @@ mod tests {
     }
 
     #[test]
+    fn mass_erase_span_covers_every_sector() {
+        // erase_all() erases [BOOT_ADDR, BOOT_ADDR+FLASH_SPAN) -- that must hit
+        // all 8 F411 sectors, leaving nothing behind.
+        assert_eq!(
+            overlapping_sectors(BOOT_ADDR, FLASH_SPAN).len(),
+            F411_SECTORS.len()
+        );
+        assert_eq!(overlapping_sectors(BOOT_ADDR, FLASH_SPAN)[0], BOOT_ADDR);
+    }
+
+    #[test]
     fn app_image_spans_only_the_sectors_it_covers() {
         // 100 KB app fits in S5 alone.
         assert_eq!(overlapping_sectors(APP_ADDR, 100 * 1024), vec![0x0802_0000]);
@@ -1064,6 +1159,24 @@ mod tests {
         // An unset / unparseable variable yields the supplied default rather
         // than panicking, so a fresh environment uses the tuned defaults.
         assert_eq!(env_u64("FREEJOYX_FLASH_NONEXISTENT_KNOB_XYZ", 42), 42);
+    }
+
+    #[test]
+    fn robustness_knobs_default_on() {
+        // The anpeaco/FreeJoyXConfiguratorQt#80 fix must be ON by default (no
+        // flag needed): require a CONFIRMED stable idle (so a single premature
+        // DNLOAD-IDLE can't pass and STALL the next block), and enforce a minimum
+        // per-block program window for clones that lie "done" instantly. A zero
+        // confirmation count would defeat the whole check, so it's floored >= 1.
+        let t = Timings::from_env();
+        assert!(
+            t.idle_confirmations >= 2,
+            "stable-idle confirmation must default on"
+        );
+        assert!(
+            t.min_block_program_ms >= 1,
+            "min program window must default on"
+        );
     }
 
     #[test]
