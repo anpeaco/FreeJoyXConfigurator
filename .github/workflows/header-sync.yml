@@ -5,6 +5,14 @@ name: Wire-format header sync
 # vendored/ copies and the firmware repo's canonical common_*.h.
 #
 # See Port.md §10 "Drift detection" for the cross-repo lockstep rule.
+#
+# PARKED-PORT MODE: this port is currently parked behind the firmware's latest
+# wire-format generation (vendored/ + the freejoyx-core codec target an older
+# gen on purpose). So drift vs firmware master is EXPECTED and reported as a
+# WARNING rather than a hard failure -- otherwise every push/PR reds out for an
+# intentional lag. When the port resumes and vendored/ + crates/freejoyx-core
+# are re-synced to the current gen, re-arm the gate: change `::warning` back to
+# `::error` and the final `sys.exit(0)` back to `sys.exit(1)`.
 
 on:
   push:
@@ -61,7 +69,7 @@ jobs:
                   print(f"OK: {fw} matches {cf} (semantic)")
                   continue
               drift = True
-              print(f"::error file={cf}::Wire-format drift vs {fw}")
+              print(f"::warning file={cf}::Wire-format drift vs {fw} (expected: port parked behind latest gen)")
               # Print first ~20 differing tokens for context
               a, b = normalize(fw).split(), normalize(cf).split()
               diff = list(difflib.unified_diff(a, b, lineterm="", n=2))[:25]
@@ -69,9 +77,11 @@ jobs:
                   print(line)
 
           if drift:
-              print("\nThis repo's vendored/ headers must match the firmware "
-                    "repo's canonical common_*.h. To refresh, see "
-                    "vendored/README.md, then update the Rust codec in "
-                    "crates/freejoyx-core/src/wire/ to match the new layout.")
-              sys.exit(1)
+              print("\nDrift detected. While the port is PARKED this is expected "
+                    "and non-fatal (see the note at the top of this workflow). "
+                    "When the port resumes, refresh vendored/ (see "
+                    "vendored/README.md), update the Rust codec in "
+                    "crates/freejoyx-core/src/wire/ to match, and re-arm this "
+                    "gate (::warning -> ::error, sys.exit(0) -> sys.exit(1)).")
+              sys.exit(0)
           PY
